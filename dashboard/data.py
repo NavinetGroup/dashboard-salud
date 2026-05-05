@@ -2,6 +2,7 @@
 """Cached DuckDB queries and GeoJSON loader for the dashboard."""
 
 import json
+import urllib.request
 from pathlib import Path
 
 import duckdb
@@ -9,7 +10,21 @@ import pandas as pd
 import streamlit as st
 
 DB = Path(__file__).parent.parent / 'data' / 'informe_regional.duckdb'
+DB_URL = 'https://github.com/NavinetGroup/dashboard-salud/releases/download/data-v1/informe_regional.duckdb'
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
+
+
+@st.cache_resource(show_spinner=False)
+def _ensure_db() -> str:
+    if not DB.exists():
+        DB.parent.mkdir(parents=True, exist_ok=True)
+        with st.spinner('Descargando base de datos (~208 MB, solo primera carga)...'):
+            urllib.request.urlretrieve(DB_URL, DB)
+    return str(DB)
+
+
+def _connect() -> duckdb.DuckDBPyConnection:
+    return duckdb.connect(_ensure_db(), read_only=True)
 
 # ISO 3166-2 -> DANE department code (integer)
 ISO_TO_DANE: dict[str, int] = {
@@ -83,7 +98,7 @@ def load_geojson() -> dict:
 @st.cache_data(ttl=3600)
 def get_available_years() -> list[int]:
     """Return sorted-descending list of years present across main sources."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     years: set[int] = set()
     for t in ('afiliacion', 'irca', 'ins_dengue', 'ins_mortalidad_materna'):
         try:
@@ -98,7 +113,7 @@ def get_available_years() -> list[int]:
 @st.cache_data(ttl=3600)
 def get_available_months(year: int) -> list[str]:
     """Return months (uppercase Spanish) available in afiliacion for a given year."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     try:
         rs = con.execute(
             "SELECT DISTINCT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? AND mes IS NOT NULL",
@@ -115,7 +130,7 @@ def get_available_months(year: int) -> list[str]:
 @st.cache_data(ttl=3600)
 def get_source_periods() -> dict[str, str]:
     """Return latest available reporting period label for each data source."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     result: dict[str, str] = {}
 
     def _latest_mes(table: str) -> str:
@@ -174,7 +189,7 @@ def get_source_periods() -> dict[str, str]:
 @st.cache_data(ttl=3600)
 def get_dept_metrics(year: int | None = None, month: str | None = None) -> pd.DataFrame:
     """Return dept-level metrics. When year/month given, overlay time-sensitive columns."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     df = con.execute("SELECT * FROM v_metricas_departamento ORDER BY departamento").df()
 
     if year is not None:
@@ -190,7 +205,7 @@ def get_mun_metrics(dep_codigo: int | None = None,
                     year: int | None = None,
                     month: str | None = None) -> pd.DataFrame:
     """Return municipality-level metrics, optionally filtered by dept and year/month."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     where = f"WHERE geo_dep_codigo = {dep_codigo}" if dep_codigo is not None else ""
     df = con.execute(f"SELECT * FROM v_metricas_municipio {where} ORDER BY municipio").df()
 
@@ -472,7 +487,7 @@ def _overlay_mun_year(con: duckdb.DuckDBPyConnection,
 @st.cache_data(ttl=3600)
 def get_dift18_dept(dep_codigo: int) -> 'pd.Series | None':
     """Return dept-level DIFT18 row, preferring departamento type over distrito."""
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     try:
         df = con.execute("""
             SELECT * FROM v_dift18_departamento
@@ -496,7 +511,7 @@ def get_dift18_dist(mun_codigo: int) -> 'pd.Series | None':
     Returns None for any other municipality."""
     if mun_codigo not in _DIST_MUN_CODES:
         return None
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     try:
         df = con.execute(
             "SELECT * FROM v_dift18_departamento WHERE mun_codigo_ref = ? LIMIT 1",
@@ -510,7 +525,7 @@ def get_dift18_dist(mun_codigo: int) -> 'pd.Series | None':
 
 @st.cache_data(ttl=3600)
 def get_dift18_mun(mun_codigo: int) -> 'pd.Series | None':
-    con = duckdb.connect(str(DB), read_only=True)
+    con = _connect()
     try:
         df = con.execute(
             "SELECT * FROM v_dift18_municipio WHERE geo_mun_codigo = ?", [mun_codigo]
