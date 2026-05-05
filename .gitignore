@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual environments
+.venv/
+.venv_py314_backup/
+informeregional/
+venv/
+env/
+
+# Data files (too large for GitHub)
+data/
+*.duckdb
+*.duckdb.wal
+
+# Local Claude settings
+.claude/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
