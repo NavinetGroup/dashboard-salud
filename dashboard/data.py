@@ -2,6 +2,7 @@
 """Cached DuckDB queries and GeoJSON loader for the dashboard."""
 
 import json
+import os
 import urllib.request
 from pathlib import Path
 
@@ -9,7 +10,10 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
-DB = Path(__file__).parent.parent / 'data' / 'informe_regional.duckdb'
+# INFORME_DB_PATH env var lets corporate deployments keep the duckdb
+# outside the app folder so it survives code upgrades.
+DB = Path(os.environ.get('INFORME_DB_PATH',
+          str(Path(__file__).parent.parent / 'data' / 'informe_regional.duckdb')))
 DB_URL = 'https://github.com/NavinetGroup/dashboard-salud/releases/download/data-v1/informe_regional.duckdb'
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
 
