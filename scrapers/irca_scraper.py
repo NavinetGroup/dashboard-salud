@@ -31,6 +31,11 @@ SIVICAP_REPORT = 'https://sivicap.ins.gov.co/SIVICAP/ReportesCG/ReportesSIVICAP?
 SIVICAP_USER = 'invitado@ins.gov.co'
 SIVICAP_PASS = '123456'
 
+# Persistent Chrome profile for SIVICAP. Run tools/setup_sivicap_session.py once
+# to bootstrap a real-browser login (handles reCAPTCHA manually). Subsequent
+# automated scrapes reuse the saved cookies and skip the login entirely.
+PROFILE_DIR = Path(__file__).resolve().parent.parent / 'data' / 'chrome_profile_sivicap'
+
 COLUMN_MAP = {
     'Anio': 'anio',
     'Mes': 'mes',
@@ -80,7 +85,16 @@ def _detect_chrome_major() -> int | None:
     return None
 
 
-def _make_driver(download_dir: str) -> uc.Chrome:
+def _make_driver(download_dir: str, headless: bool = True,
+                 use_profile: bool = True) -> uc.Chrome:
+    """Create a Chrome driver.
+
+    headless: run without visible window (default). Set False for first-time
+              setup so user can complete reCAPTCHA manually.
+    use_profile: reuse the persistent SIVICAP profile if it exists. This carries
+                 the session cookies from the manual login and skips reCAPTCHA
+                 on subsequent runs.
+    """
     opts = uc.ChromeOptions()
     opts.add_argument('--window-size=1920,1080')
     opts.add_argument('--no-sandbox')
@@ -95,8 +109,13 @@ def _make_driver(download_dir: str) -> uc.Chrome:
     # Pin version_main to match the installed Chrome — undetected-chromedriver's
     # default driver download can lag/lead the browser by one version, producing
     # "session not created" errors. Passing the exact major fixes the mismatch.
-    driver = uc.Chrome(options=opts, version_main=major) if major \
-        else uc.Chrome(options=opts)
+    kwargs = {'options': opts, 'headless': headless}
+    if major:
+        kwargs['version_main'] = major
+    if use_profile:
+        PROFILE_DIR.mkdir(parents=True, exist_ok=True)
+        kwargs['user_data_dir'] = str(PROFILE_DIR)
+    driver = uc.Chrome(**kwargs)
     try:
         driver.execute_cdp_cmd('Page.setDownloadBehavior', {
             'behavior': 'allow',
@@ -105,6 +124,14 @@ def _make_driver(download_dir: str) -> uc.Chrome:
     except Exception:
         pass
     return driver
+
+
+def _is_logged_in(driver: uc.Chrome) -> bool:
+    """Check whether the existing session is already authenticated by hitting a
+    protected page — if SIVICAP doesn't redirect us to /Account/Login, we're in."""
+    driver.get(SIVICAP_REPORT)
+    time.sleep(3)
+    return '/account/login' not in driver.current_url.lower()
 
 
 def _wait_download(download_dir: str, prefix: str, timeout: int = 120) -> Path | None:
@@ -173,17 +200,32 @@ def _login(driver: uc.Chrome, wait: WebDriverWait) -> bool:
 
 
 def _scrape_sivicap(download_dir: str) -> Path | None:
-    """Download IRCA monthly-per-municipality CSV from SIVICAP. Returns local path or None."""
-    driver = _make_driver(download_dir)
+    """Download IRCA monthly-per-municipality CSV from SIVICAP. Returns local path or None.
+
+    Strategy:
+      1. Open with persistent profile (cookies from previous manual login).
+      2. Hit the report page directly; if SIVICAP doesn't redirect us to login,
+         the session is still valid — skip the whole reCAPTCHA dance.
+      3. Otherwise fall back to the (often-blocked) automated login.
+    """
+    driver = _make_driver(download_dir, headless=True, use_profile=True)
     try:
         wait = WebDriverWait(driver, 30)
 
-        if not _login(driver, wait):
-            return None
-
-        log.info('SIVICAP: navegando al reporte IRCA municipal...')
-        driver.get(SIVICAP_REPORT)
-        time.sleep(5)
+        if _is_logged_in(driver):
+            log.info(f'SIVICAP: sesión persistente válida ({driver.current_url})')
+        else:
+            log.info('SIVICAP: sesión no válida, intentando login automático...')
+            if not _login(driver, wait):
+                log.warning(
+                    'SIVICAP: login automático rechazado (anti-bot). '
+                    'Ejecute "python tools/setup_sivicap_session.py" UNA VEZ '
+                    'para hacer login manual en el navegador y guardar la sesión.'
+                )
+                return None
+            # _login already landed us on a post-login page; navigate to report
+            driver.get(SIVICAP_REPORT)
+            time.sleep(5)
 
         # Select report type: IRCA mensual por municipio
         try:
@@ -279,6 +321,10 @@ def _parse_irca(path: Path) -> pl.DataFrame | None:
     rename = {k: v for k, v in COLUMN_MAP.items() if k in df.columns}
     if rename:
         df = df.rename(rename)
+    # SIVICAP CSVs have trailing empty ;;;;; columns producing "_duplicated_N" /
+    # unnamed columns. Drop anything that didn't map to a known field.
+    known_cols = set(COLUMN_MAP.values())
+    df = df.select([c for c in df.columns if c in known_cols])
 
     for col in ('anio', 'codigo_dep', 'codigo_mun', 'n_muestras',
                 'n_muestras_urbano', 'n_muestras_rural'):
@@ -302,10 +348,22 @@ def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
     glob = f'{parquet_dir.as_posix()}/irca_*.parquet'
     con = duckdb.connect(str(db_path))
     con.execute('DROP TABLE IF EXISTS irca')
-    con.execute(f"CREATE TABLE irca AS SELECT * FROM read_parquet('{glob}')")
+    # Dedupe on natural key (anio, mes, codigo_mun). Monthly SIVICAP exports overlap
+    # historical periods, so loading every parquet would duplicate rows. ROW_NUMBER
+    # picks one row per key — all values for a given (anio, mes, mun) are identical
+    # across exports. union_by_name handles the schema gap between the older
+    # Decreto 1575/2007 format (has urbano/rural columns) and the newer
+    # Resolución 622/2020 format (consolidated columns only).
+    con.execute(f"""
+        CREATE TABLE irca AS
+        SELECT * EXCLUDE (_rn) FROM (
+            SELECT *, ROW_NUMBER() OVER (PARTITION BY anio, mes, codigo_mun ORDER BY anio) AS _rn
+            FROM read_parquet('{glob}', union_by_name=True)
+        ) WHERE _rn = 1
+    """)
     n = con.execute('SELECT COUNT(*) FROM irca').fetchone()[0]
     con.close()
-    print(f'  DuckDB [irca]: {n:,} filas')
+    print(f'  DuckDB [irca]: {n:,} filas (deduplicadas)')
 
 
 def run(base_dir: str = None) -> None:
