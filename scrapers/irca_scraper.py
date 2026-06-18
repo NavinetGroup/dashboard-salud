@@ -30,7 +30,6 @@ SIVICAP_LOGIN = 'https://sivicap.ins.gov.co/SIVICAP/Account/Login'
 SIVICAP_REPORT = 'https://sivicap.ins.gov.co/SIVICAP/ReportesCG/ReportesSIVICAP?menuId=228'
 SIVICAP_USER = 'invitado@ins.gov.co'
 SIVICAP_PASS = '123456'
-CHROME_VERSION = 147
 
 COLUMN_MAP = {
     'Anio': 'anio',
@@ -62,6 +61,25 @@ def _normalize(s: str) -> str:
     return ' '.join(s.split()).strip()
 
 
+def _detect_chrome_major() -> int | None:
+    """Return the installed Chrome major version from the Windows registry,
+    or None on non-Windows / not installed. Auto-detect avoids hard-coding
+    a version that breaks after Chrome auto-updates."""
+    import subprocess
+    try:
+        out = subprocess.run(
+            ['reg', 'query', r'HKEY_CURRENT_USER\Software\Google\Chrome\BLBeacon', '/v', 'version'],
+            capture_output=True, text=True, timeout=5,
+        ).stdout
+        for line in out.splitlines():
+            if 'version' in line.lower():
+                ver = line.split()[-1]
+                return int(ver.split('.')[0])
+    except Exception:
+        pass
+    return None
+
+
 def _make_driver(download_dir: str) -> uc.Chrome:
     opts = uc.ChromeOptions()
     opts.add_argument('--window-size=1920,1080')
@@ -73,7 +91,12 @@ def _make_driver(download_dir: str) -> uc.Chrome:
         'download.directory_upgrade': True,
         'safebrowsing.enabled': True,
     })
-    driver = uc.Chrome(options=opts, version_main=CHROME_VERSION)
+    major = _detect_chrome_major()
+    # Pin version_main to match the installed Chrome — undetected-chromedriver's
+    # default driver download can lag/lead the browser by one version, producing
+    # "session not created" errors. Passing the exact major fixes the mismatch.
+    driver = uc.Chrome(options=opts, version_main=major) if major \
+        else uc.Chrome(options=opts)
     try:
         driver.execute_cdp_cmd('Page.setDownloadBehavior', {
             'behavior': 'allow',

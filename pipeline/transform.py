@@ -49,16 +49,45 @@ def _register_table(con: duckdb.DuckDBPyConnection, name: str, parquet_path: Pat
 # ---------------------------------------------------------------------------
 
 def transform_demografico(con: duckdb.DuckDBPyConnection) -> None:
-    """Register pre-built demografico parquet files in DuckDB.
-    The scraper (scrapers/demografico.py) writes the parquet directly;
-    this function just ensures they are registered as DuckDB tables."""
-    for name in ('demografico_edad_sexo', 'demografico_etnico'):
-        path = PARQUET_DIR / f'{name}.parquet'
-        if not path.exists():
-            log.warning(f'demografico: {path.name} no encontrado — ejecuta scrapers/demografico.py primero.')
-            continue
-        _register_table(con, name, path)
-        log.info(f'demografico: tabla [{name}] registrada desde parquet.')
+    """Register demografico parquet files in DuckDB as pre-aggregated slim tables.
+
+    The raw DANE PPED parquet has ~11.3M rows (per year × dep × mun × area × sexo × edad).
+    No dashboard query uses `edad` or `area_geografica` (both are always summed over),
+    so we collapse those two dimensions here. This drops the DB from ~410 MB to ~15 MB,
+    enabling free-tier web hosting (Streamlit Cloud, etc.) without losing any information
+    the dashboard actually reads. Raw parquets are preserved on disk for future use.
+    """
+    edad_sexo_path = PARQUET_DIR / 'demografico_edad_sexo.parquet'
+    if edad_sexo_path.exists():
+        con.execute('DROP TABLE IF EXISTS demografico_edad_sexo')
+        con.execute(f"""
+            CREATE TABLE demografico_edad_sexo AS
+            SELECT codigo_dep, nombre_dep, codigo_mun, municipio,
+                   anio, sexo,
+                   SUM(poblacion) AS poblacion
+            FROM read_parquet('{edad_sexo_path.as_posix()}')
+            GROUP BY codigo_dep, nombre_dep, codigo_mun, municipio, anio, sexo
+        """)
+        n = con.execute('SELECT COUNT(*) FROM demografico_edad_sexo').fetchone()[0]
+        log.info(f'Tabla DuckDB [demografico_edad_sexo]: {n:,} filas (slim, edad+area colapsadas)')
+    else:
+        log.warning('demografico: demografico_edad_sexo.parquet no encontrado — ejecuta scrapers/demografico.py primero.')
+
+    etnico_path = PARQUET_DIR / 'demografico_etnico.parquet'
+    if etnico_path.exists():
+        con.execute('DROP TABLE IF EXISTS demografico_etnico')
+        con.execute(f"""
+            CREATE TABLE demografico_etnico AS
+            SELECT codigo_dep, nombre_dep, codigo_mun, municipio,
+                   anio, grupo_etnico,
+                   SUM(poblacion) AS poblacion
+            FROM read_parquet('{etnico_path.as_posix()}')
+            GROUP BY codigo_dep, nombre_dep, codigo_mun, municipio, anio, grupo_etnico
+        """)
+        n = con.execute('SELECT COUNT(*) FROM demografico_etnico').fetchone()[0]
+        log.info(f'Tabla DuckDB [demografico_etnico]: {n:,} filas (slim, area colapsada)')
+    else:
+        log.warning('demografico: demografico_etnico.parquet no encontrado — ejecuta scrapers/demografico.py primero.')
 
 
 # ---------------------------------------------------------------------------
@@ -181,7 +210,10 @@ def transform_supersalud(con: duckdb.DuckDBPyConnection) -> None:
         glob = f'{PARQUET_DIR.as_posix()}/supersalud_{kind}_*.parquet'
         table = f'supersalud_{kind}'
         con.execute(f'DROP TABLE IF EXISTS {table}')
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{glob}')")
+        # union_by_name handles header drift between CTFT21-* (pre-2026) and
+        # M4-FT-16-* (2026+) Supersalud Excel exports.
+        con.execute(f"CREATE TABLE {table} AS "
+                    f"SELECT * FROM read_parquet('{glob}', union_by_name=True)")
         n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
         log.info(f'Tabla DuckDB [{table}]: {n:,} filas')
 

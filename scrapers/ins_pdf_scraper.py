@@ -129,8 +129,11 @@ EVENTS = [
             ['departamento', 'municipio', 'casos', 'prevalencia_por_100'],
         ],
         'table_labels': ['menos_20000', 'entre_20000_100000', 'mas_100000'],
-        # Some periods (e.g. 2026 PE_II+) have the EPS breakdown table at page 1 index 0;
-        # reject tables where <30% of 'departamento' values are valid Colombian departments.
+        # NOTE: From PE_I_2026 onwards, INS dropped the departmental/municipal breakdown
+        # from the desnutrición PDF — page 1 now shows EAPB (insurer) tables instead.
+        # geo_validate_col correctly rejects those; "no tables found" warnings for 2026
+        # periods are expected until INS restores the geographic table or we add a
+        # SIVIGILA Excel source as fallback. 2025 data remains intact from prior runs.
         'geo_validate_col': 'departamento',
         'fallback_pages': [2, 0, 3],
     },

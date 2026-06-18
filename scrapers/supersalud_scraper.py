@@ -34,7 +34,7 @@ HEADERS = {
 
 URL_IPS_XLSX = (
     'https://docs.supersalud.gov.co/PortalWeb/MedidasEspeciales/Directorio%20de%20Entidades/'
-    'CTFT21-Listado-de-entidades-en-medida-preventiva-y-entidades-en-intervencion-forzosa-'
+    'M4-FT-16-Listado-de-entidades-en-medida-preventiva-y-entidades-en-intervencion-forzosa-'
     'administrativa-para-administrar-IPS.xlsx'
 )
 
@@ -142,7 +142,10 @@ def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
         glob = f'{parquet_dir.as_posix()}/supersalud_{kind}_*.parquet'
         table = f'supersalud_{kind}'
         con.execute(f'DROP TABLE IF EXISTS {table}')
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{glob}')")
+        # union_by_name handles header-name drift across months (Supersalud renamed
+        # the IPS file from CTFT21-* to M4-FT-16-* in 2026, changing 2 column labels).
+        con.execute(f"CREATE TABLE {table} AS "
+                    f"SELECT * FROM read_parquet('{glob}', union_by_name=True)")
         n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
         print(f'  DuckDB [{table}]: {n:,} filas')
     con.close()

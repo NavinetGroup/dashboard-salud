@@ -82,6 +82,8 @@ ENDPOINTS = [
         'btn_export': '_ctl0_ContentPlaceHolder1_ibText',
         'input_sep': '_ctl0_ContentPlaceHolder1_tbSeparator',
         'filename': 'Sanciones.csv',
+        # Sanciones routinely takes 6–8 min server-side; default 300s timeout was insufficient.
+        'download_timeout': 600,
     },
 ]
 
@@ -235,7 +237,8 @@ def _scrape_endpoint(driver: webdriver.Chrome, ep: dict, download_dir: str, stam
         log.warning(f'REPS [{name}]: no se encontró botón de exportar.')
         return None
 
-    path = _esperar_descarga(download_dir, ep['filename'], timeout=300,
+    path = _esperar_descarga(download_dir, ep['filename'],
+                             timeout=ep.get('download_timeout', 300),
                              existing_before=files_before)
     if not path or not os.path.exists(path):
         log.warning(f'REPS [{name}]: descarga no completada.')
