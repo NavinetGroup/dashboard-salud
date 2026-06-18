@@ -72,7 +72,7 @@ Doble clic en `deploy/install.ps1` → instala Python si falta, configura tarea 
 
 El pipeline de datos se ejecuta una vez al mes para refrescar fuentes mensuales. Ver [MANTENIMIENTO.md](MANTENIMIENTO.md) para el runbook completo (qué es automático, qué requiere acción humana, cómo publicar la versión nueva del DB).
 
-Para la arquitectura técnica del scraping ver [WEBSCRAPING_GUIDE.md](WEBSCRAPING_GUIDE.md).
+Para la arquitectura técnica del scraping ver [docs/WEBSCRAPING_GUIDE.md](docs/WEBSCRAPING_GUIDE.md) y el catálogo de indicadores en [docs/INDICADORES_FUENTES.md](docs/INDICADORES_FUENTES.md).
 
 ---
 

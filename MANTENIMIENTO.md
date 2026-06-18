@@ -126,5 +126,7 @@ gh release upload data-v1 data/informe_regional.duckdb --repo NavinetGroup/dashb
 
 ## 📚 Referencias
 
-- Arquitectura técnica completa: [WEBSCRAPING_GUIDE.md](WEBSCRAPING_GUIDE.md)
-- Definiciones de indicadores: [INDICADORES_FUENTES.md](INDICADORES_FUENTES.md)
+- Arquitectura técnica completa: [docs/WEBSCRAPING_GUIDE.md](docs/WEBSCRAPING_GUIDE.md)
+- Definiciones de indicadores: [docs/INDICADORES_FUENTES.md](docs/INDICADORES_FUENTES.md)
+- Contexto histórico inicial: [docs/archive/CONTEXTO_INICIAL_20250101.md](docs/archive/CONTEXTO_INICIAL_20250101.md)
+- Mapeo KPIs ↔ fuentes (referencia personal): [docs/reference/informe_regional_kpis_fuentes.xlsx](docs/reference/informe_regional_kpis_fuentes.xlsx)
