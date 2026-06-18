@@ -1,5 +1,8 @@
 FROM python:3.12-slim
 
+# Non-root user for the running app
+RUN groupadd -r app && useradd -r -g app -d /app -s /bin/bash app
+
 WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
@@ -8,7 +11,9 @@ ENV PYTHONUNBUFFERED=1 \
     STREAMLIT_SERVER_HEADLESS=true \
     STREAMLIT_SERVER_PORT=8501 \
     STREAMLIT_SERVER_ADDRESS=0.0.0.0 \
-    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
+    STREAMLIT_BROWSER_GATHER_USAGE_STATS=false \
+    STREAMLIT_SERVER_ENABLE_CORS=false \
+    STREAMLIT_SERVER_ENABLE_XSRF_PROTECTION=true
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         curl ca-certificates \
@@ -19,8 +24,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY dashboard ./dashboard
 
-RUN mkdir -p /data
+RUN mkdir -p /data && chown -R app:app /app /data
 VOLUME ["/data"]
+USER app
 
 EXPOSE 8501
 

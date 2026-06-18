@@ -1,0 +1,32 @@
+# Caddy config — Informe Regional de Salud
+#
+# TLS se controla cambiando UNA línea de abajo según el modo elegido en .env:
+#   • TLS_MODE=internal  →  deja `tls internal` (Caddy auto-firma)
+#   • TLS_MODE=file      →  cambia a `tls /certs/cert.pem /certs/key.pem`
+#   • TLS_MODE=acme      →  cambia a `tls tuemail@dominio.com` (Let's Encrypt)
+
+{$HOSTNAME} {
+	reverse_proxy dashboard:8501 {
+		header_up Host {host}
+		header_up X-Real-IP {remote}
+	}
+
+	# ⬇️ EDITAR según TLS_MODE en .env
+	tls internal
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	encode zstd gzip
+
+	log {
+		output stdout
+		format console
+		level INFO
+	}
+}

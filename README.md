@@ -74,6 +74,15 @@ El pipeline de datos se ejecuta una vez al mes para refrescar fuentes mensuales.
 
 Para la arquitectura técnica del scraping ver [docs/WEBSCRAPING_GUIDE.md](docs/WEBSCRAPING_GUIDE.md) y el catálogo de indicadores en [docs/INDICADORES_FUENTES.md](docs/INDICADORES_FUENTES.md).
 
+## 🏛️ Despliegue corporativo (SuperSalud)
+
+Para desplegar en una VM corporativa con HTTPS + cron automatizado:
+
+- **Lo que IT debe aprovisionar:** [docs/REQUISITOS_VM_IT.md](docs/REQUISITOS_VM_IT.md) (specs, red, DNS, TLS)
+- **Cómo desplegarlo paso a paso:** [docs/DESPLIEGUE_SUPERSALUD.md](docs/DESPLIEGUE_SUPERSALUD.md) (~30 min)
+
+Archivos clave para producción: `docker-compose.prod.yml`, `Caddyfile`, `.env.example`, `scripts/install_vm.sh`, `scripts/run_monthly_pipeline.sh`.
+
 ---
 
 ## 📐 Tamaños y requisitos

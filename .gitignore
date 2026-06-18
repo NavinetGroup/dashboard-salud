@@ -28,3 +28,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Environment / secrets — never commit the populated .env
+.env
