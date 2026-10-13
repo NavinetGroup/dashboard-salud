@@ -209,7 +209,10 @@ def transform_afiliacion(con: duckdb.DuckDBPyConnection) -> None:
         return
     glob = f'{PARQUET_DIR.as_posix()}/afiliacion_*.parquet'
     con.execute('DROP TABLE IF EXISTS afiliacion')
-    con.execute(f"CREATE TABLE afiliacion AS SELECT * FROM read_parquet('{glob}')")
+    # union_by_name: from 2026-03 MinSalud adds codigo_dep/codigo_mun (DIVIPOLA).
+    # Without it DuckDB uses the first (oldest) file's schema and drops them.
+    con.execute(f"CREATE TABLE afiliacion AS "
+                f"SELECT * FROM read_parquet('{glob}', union_by_name=True)")
     n = con.execute('SELECT COUNT(*) FROM afiliacion').fetchone()[0]
     log.info(f'Tabla DuckDB [afiliacion]: {n:,} filas')
 

@@ -3,7 +3,7 @@
 Scraper afiliación en salud — MinSalud.
 
 Descarga el ZIP mensual publicado en MinSalud, extrae el Excel interior,
-lee la hoja CoberturaMunicipio y escribe directamente a Parquet + DuckDB.
+lee la hoja CoberturaMunicipio y escribe Parquet (transform.py lo carga en DuckDB).
 No produce archivos CSV intermedios.
 """
 
@@ -21,11 +21,6 @@ import polars as pl
 import requests
 
 log = logging.getLogger(__name__)
-
-BASE_URL = (
-    'https://www.minsalud.gov.co/sites/rid/Lists/BibliotecaDigital/RIDE/VP/RBC/'
-    'cifras-afiliacion-salud-{mes}-{year}.zip'
-)
 
 # Known historical URLs that don't match the standard pattern
 HISTORICAL_URLS: dict[tuple[int, int], list[str]] = {
@@ -71,11 +66,57 @@ RENAME_MAP = {
 }
 
 
-def _build_url(year: int, month: int) -> str:
-    historical = HISTORICAL_URLS.get((year, month))
-    if historical:
-        return historical[0]
-    return BASE_URL.format(mes=MESES_ES[month], year=year)
+# MinSalud has no stable naming scheme: verified 2026 files include
+#   RBC/cifras-afiliacion-salud-abr-2026.zip, RBC/cifras-afiliacion-salud-jun-2026.zip,
+#   DOA/cifras-afiliacion-salud-julio-2026.zip, RBC/cifras-afiliacion-salud-agosto2026.zip
+# so candidates are probed (HEAD) in rough order of likelihood.
+_URL_ROOT = 'https://www.minsalud.gov.co/sites/rid/Lists/BibliotecaDigital/RIDE/VP/'
+_URL_DIRS = ('RBC/', 'DOA/', 'DOA/OAS/')
+_URL_STEMS = ('cifras-afiliacion-salud-{m}-{y}', 'cifras-afiliacion-salud-{m}{y}',
+              'cifra-afiliacion-salud-{m}-{y}', 'cifras-afiliacion-{m}-{y}')
+MESES_ABBR = {1: ('ene',), 2: ('feb',), 3: ('mar',), 4: ('abr',), 5: ('may',), 6: ('jun',),
+              7: ('jul',), 8: ('ago',), 9: ('sep', 'sept'), 10: ('oct',), 11: ('nov',), 12: ('dic',)}
+
+
+def _candidate_urls(year: int, month: int) -> list[str]:
+    urls = list(HISTORICAL_URLS.get((year, month), []))
+    names = (MESES_ES[month], *MESES_ABBR[month])
+    for d in _URL_DIRS:
+        for stem in _URL_STEMS:
+            for n in names:
+                u = _URL_ROOT + d + stem.format(m=n, y=year) + '.zip'
+                if u not in urls:
+                    urls.append(u)
+    return urls
+
+
+def _find_zip_url(year: int, month: int) -> str | None:
+    """Return the first candidate URL that exists, or None if not published yet."""
+    session = requests.Session()
+    session.headers['User-Agent'] = 'Mozilla/5.0'
+    for url in _candidate_urls(year, month):
+        try:
+            r = session.head(url, timeout=(10, 30), allow_redirects=True)
+        except requests.RequestException as e:
+            log.warning(f'afiliacion: HEAD falló para {url} — {e}')
+            continue
+        if r.status_code == 200:
+            return url
+    return None
+
+
+def _period_from_name(name: str) -> tuple[int, int] | None:
+    """Read (year, month) from a name like 'CIFRAS MARZO-2026.xlsx' or '...-abr-2026.zip'."""
+    s = name.lower()
+    y = re.search(r'(20\d{2})', s)
+    if not y:
+        return None
+    tokens = re.findall(r'[a-záéíóú]+', s)
+    for month, full in MESES_ES.items():
+        for t in tokens:
+            if t == full or t in MESES_ABBR[month]:
+                return int(y.group(1)), month
+    return None
 
 
 def _download_zip(url: str, retries: int = 3) -> bytes | None:
@@ -111,6 +152,15 @@ def _read_sheet_openpyxl(xlsx_bytes: bytes, sheet_name: str) -> list | None:
         return rows
     except Exception as e:
         log.warning(f'afiliacion: error leyendo hoja {sheet_name} — {e}')
+        return None
+
+
+def _zip_inner_name(data: bytes) -> str | None:
+    try:
+        with zipfile.ZipFile(io.BytesIO(data)) as z:
+            names = [n for n in z.namelist() if n.lower().endswith(('.xlsx', '.xls'))]
+            return names[0] if names else None
+    except zipfile.BadZipFile:
         return None
 
 
@@ -198,97 +248,91 @@ def _normalize_df(df: pl.DataFrame, year: int, month: int) -> pl.DataFrame:
     return df
 
 
-def run(base_dir: str = None, year: int = None, month: int = None) -> None:
+def _local_zip(base_dir: Path, year: int, month: int) -> Path | None:
+    """A manually downloaded ZIP for this period, in the project root or data/raw."""
+    for folder in (base_dir, base_dir / 'data' / 'raw'):
+        for p in folder.glob('*.zip'):
+            if 'afiliacion' in p.name.lower() and _period_from_name(p.name) == (year, month):
+                return p
+    return None
+
+
+def _target_periods(year: int | None, month: int | None, lookback: int) -> list[tuple[int, int]]:
+    if year is not None and month is not None:
+        return [(year, month)]
+    now = datetime.now()
+    y, m = now.year, now.month
+    periods = []
+    for _ in range(lookback):
+        m -= 1
+        if m == 0:
+            y, m = y - 1, 12
+        periods.append((y, m))
+    return periods
+
+
+def run(base_dir: str = None, year: int = None, month: int = None, lookback: int = 12) -> None:
+    """Fetch every month in the last `lookback` months that has no parquet yet.
+
+    Data is always stored under the period stated inside the ZIP (the Excel is
+    named e.g. 'CIFRAS MARZO-2026.xlsx'), never under the period we asked for:
+    an unpublished month is simply skipped, not filled with a neighbour's data.
+    """
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
     parquet_dir.mkdir(parents=True, exist_ok=True)
 
-    now = datetime.now()
-    if year is None or month is None:
-        if now.month == 1:
-            year, month = now.year - 1, 12
+    def parquet_for(y: int, m: int) -> Path:
+        return parquet_dir / f'afiliacion_{y}_{m:02d}.parquet'
+
+    missing = [p for p in _target_periods(year, month, lookback) if not parquet_for(*p).exists()]
+    if not missing:
+        print('afiliacion_scraper: todos los meses ya están en parquet.')
+        return
+
+    written, unpublished = [], []
+    for y, m in missing:
+        if parquet_for(y, m).exists():   # written earlier in this run under its true period
+            continue
+        local = _local_zip(base_dir, y, m)
+        if local:
+            log.info(f'afiliacion: usando ZIP local {local}')
+            zip_data, source = local.read_bytes(), local.name
         else:
-            year, month = now.year, now.month - 1
+            url = _find_zip_url(y, m)
+            if url is None:
+                unpublished.append(f'{y}-{m:02d}')
+                continue
+            print(f'afiliacion_scraper: descargando {url}')
+            zip_data, source = _download_zip(url), url
+            if zip_data is None:
+                log.warning(f'afiliacion: descarga fallida {url}')
+                continue
 
-    stamp = f'{year}_{month:02d}'
-    parquet_path = parquet_dir / f'afiliacion_{stamp}.parquet'
+        inner = _zip_inner_name(zip_data)
+        period = _period_from_name(inner or '') or _period_from_name(source)
+        if period is None:
+            log.warning(f'afiliacion: no se pudo leer el periodo de {source} ({inner}); omitido')
+            continue
+        if period != (y, m):
+            log.warning(f'afiliacion: {source} contiene {period[0]}-{period[1]:02d}, '
+                        f'no {y}-{m:02d}; se guarda bajo su periodo real')
+        out = parquet_for(*period)
+        if out.exists():
+            continue
 
-    if parquet_path.exists():
-        print(f'afiliacion_scraper: parquet existente {parquet_path}')
-        return
+        df = _extract_df_from_zip(zip_data)
+        if df is None:
+            log.warning(f'afiliacion: no se pudo leer el Excel de {source}')
+            continue
+        df = _normalize_df(df, *period)
+        df.write_parquet(out, compression='zstd')
+        written.append(out.name)
+        print(f'  -> {out} ({len(df):,} filas)')
 
-    # --- Migrate existing CSV if present ---
-    raw_dir = base_dir / 'data' / 'raw'
-    csv_path = raw_dir / f'afiliacion_{stamp}.csv'
-    if csv_path.exists():
-        print(f'afiliacion_scraper: convirtiendo CSV existente a Parquet')
-        df = pl.read_csv(csv_path, separator='|', infer_schema_length=0, ignore_errors=True)
-        df = df.rename({c: c.strip() for c in df.columns})
-        df.write_parquet(parquet_path, compression='zstd')
-        print(f'  -> {parquet_path} ({len(df):,} filas)')
-        print('afiliacion_scraper OK (desde CSV migrado)')
-        return
-
-    # --- Check for ZIP in project root (manually downloaded) ---
-    # Only match ZIPs that contain both the month name and year — avoids picking up
-    # a different month's ZIP sitting in the project root.
-    mes = MESES_ES[month]
-    root_zips = [p for p in base_dir.glob('*.zip')
-                 if mes in p.name.lower() and str(year) in p.name]
-
-    zip_data = None
-    if root_zips:
-        log.info(f'afiliacion: usando ZIP existente {root_zips[0]}')
-        zip_data = root_zips[0].read_bytes()
-        m = re.search(r'(\w+)-(\d{4})\.zip', root_zips[0].name)
-        if m:
-            mes_str, yr_str = m.group(1).lower(), m.group(2)
-            for k, v in MESES_ES.items():
-                if v == mes_str:
-                    month, year = k, int(yr_str)
-                    break
-            stamp = f'{year}_{month:02d}'
-            parquet_path = parquet_dir / f'afiliacion_{stamp}.parquet'
-            if parquet_path.exists():
-                print(f'afiliacion_scraper: parquet existente {parquet_path}')
-                return
-    else:
-        url = _build_url(year, month)
-        print(f'afiliacion_scraper: descargando {url}')
-        zip_data = _download_zip(url)
-
-        if zip_data is None:
-            # Fallback: try adjacent months but keep original stamp so data is stored
-            # under the requested period, not the fallback period.
-            for delta in (-1, 1, -2):
-                alt_month = month + delta
-                alt_year = year
-                if alt_month < 1:
-                    alt_month += 12; alt_year -= 1
-                elif alt_month > 12:
-                    alt_month -= 12; alt_year += 1
-                zip_data = _download_zip(_build_url(alt_year, alt_month))
-                if zip_data:
-                    log.warning(
-                        f'afiliacion: usando datos de {alt_year}-{alt_month:02d} '
-                        f'como aproximación de {year}-{month:02d}'
-                    )
-                    break
-
-    if zip_data is None:
-        print('afiliacion_scraper: ADVERTENCIA — no se pudo obtener datos.')
-        return
-
-    df = _extract_df_from_zip(zip_data)
-    if df is None:
-        print('afiliacion_scraper: ADVERTENCIA — no se pudo leer Excel del ZIP.')
-        return
-
-    df = _normalize_df(df, year, month)
-    df.write_parquet(parquet_path, compression='zstd')
-    print(f'  -> {parquet_path} ({len(df):,} filas)')
-
-    print('afiliacion_scraper OK')
+    if unpublished:
+        print(f'afiliacion_scraper: aún no publicados: {", ".join(unpublished)}')
+    print(f'afiliacion_scraper OK — {len(written)} meses nuevos')
 
 
 if __name__ == '__main__':

@@ -97,18 +97,25 @@ MUN_ALIASES: dict[tuple[int, str], int] = {
     (97, 'PAPUNAUA'): 97777,
 }
 
-# REPS tables: the first 5 digits of the 10-digit codigo_habilitacion are the
-# DIVIPOLA municipality code. Verified 2026-10-13: it agrees with name matching
-# on every row except the Buenaventura→Cali mis-match, and resolves Cartagena,
-# Cúcuta, Tumaco, etc. that names miss. Name matching is kept only as fallback.
-# (table, habilitacion_col, dept_col, mun_col)
-REPS_CODE_SOURCES: list[tuple[str, str, str, str]] = [
-    ('reps_prestadores',       'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
-    ('reps_sedes',             'codigo_habilitacion', 'departamento', 'municipio'),
-    ('reps_servicios',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
-    ('reps_capacidad',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
-    ('reps_medidas_seguridad', 'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
-    ('reps_sanciones',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+# Sources that carry a DIVIPOLA municipality code: the code wins, and name
+# matching is only the fallback for rows where it is missing or invalid.
+# (table, SQL expression over the row alias r yielding the code, dept_col, mun_col)
+#
+# REPS: the first 5 digits of the 10-digit codigo_habilitacion are the DIVIPOLA
+# municipality code. Verified 2026-10-13: it agrees with name matching on every
+# row except the Buenaventura→Cali mis-match, and resolves Cartagena, Cúcuta,
+# Tumaco, etc. that names miss.
+# Afiliación: MinSalud added codigo_mun to the ZIP from March 2026; earlier
+# months have no code column (NULL after union_by_name) and use names.
+_REPS_CODE = "LEFT(LPAD(CAST(r.codigo_habilitacion AS VARCHAR), 10, '0'), 5)"
+CODE_FIRST_SOURCES: list[tuple[str, str, str, str]] = [
+    ('reps_prestadores',       _REPS_CODE,     'depa_nombre',  'muni_nombre'),
+    ('reps_sedes',             _REPS_CODE,     'departamento', 'municipio'),
+    ('reps_servicios',         _REPS_CODE,     'depa_nombre',  'muni_nombre'),
+    ('reps_capacidad',         _REPS_CODE,     'depa_nombre',  'muni_nombre'),
+    ('reps_medidas_seguridad', _REPS_CODE,     'depa_nombre',  'muni_nombre'),
+    ('reps_sanciones',         _REPS_CODE,     'depa_nombre',  'muni_nombre'),
+    ('afiliacion',             'r.codigo_mun', 'departamento', 'municipio'),
 ]
 
 # (table, dept_col, mun_col, has_codes, dept_fallback_col)
@@ -118,8 +125,7 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('demografico_edad_sexo',  'codigo_dep',          'codigo_mun',  True,  None),
     ('demografico_etnico',     'codigo_dep',          'codigo_mun',  True,  None),
     ('irca',                   'codigo_dep',          'codigo_mun',  True,  None),
-    ('afiliacion',             'departamento',        'municipio',   False, None),
-    # reps_* are handled separately via REPS_CODE_SOURCES
+    # afiliacion and reps_* are handled via CODE_FIRST_SOURCES
     # ins_mortalidad_materna has dept-level rows (entidad_territorial) + mun rows (departamento/municipio)
     ('ins_mortalidad_materna', 'departamento',        'municipio',   False, 'entidad_territorial'),
     ('ins_sifilis_congenita',  'entidad_territorial', None,          False, None),
@@ -380,9 +386,9 @@ def _create_view_names_dep(con, table, dept_col) -> None:
     con.execute(sql)
 
 
-def _create_view_reps(con, table, hab_col, dept_col, mun_col) -> None:
-    """View for REPS tables: municipality from the habilitation-code prefix,
-    falling back to the name bridge only when the prefix is not a valid code."""
+def _create_view_code_first(con, table, code_expr, dept_col, mun_col) -> None:
+    """View for sources carrying a municipality code: the code wins when it is a
+    valid DIVIPOLA code, otherwise fall back to the name bridge."""
     sql = f"""
         CREATE OR REPLACE VIEW v_{table} AS
         SELECT r.*,
@@ -393,7 +399,7 @@ def _create_view_reps(con, table, hab_col, dept_col, mun_col) -> None:
                NULL::INTEGER                          AS geo_distrito_codigo
         FROM {table} r
         LEFT JOIN geo_maestro gp
-               ON gp.mun_codigo = TRY_CAST(LEFT(LPAD(CAST(r.{hab_col} AS VARCHAR), 10, '0'), 5) AS INTEGER)
+               ON gp.mun_codigo = TRY_CAST({code_expr} AS INTEGER)
         LEFT JOIN geo_map_{table} mp
                ON r.{dept_col} IS NOT DISTINCT FROM mp.raw_dep
               AND r.{mun_col}  IS NOT DISTINCT FROM mp.raw_mun
@@ -404,13 +410,12 @@ def _create_view_reps(con, table, hab_col, dept_col, mun_col) -> None:
     con.execute(sql)
     total, by_code, mapped = con.execute(f"""
         SELECT COUNT(*),
-               COUNT(*) FILTER (WHERE geo_mun_codigo =
-                   TRY_CAST(LEFT(LPAD(CAST({hab_col} AS VARCHAR), 10, '0'), 5) AS INTEGER)),
+               COUNT(*) FILTER (WHERE geo_mun_codigo = TRY_CAST({code_expr} AS INTEGER)),
                COUNT(geo_mun_codigo)
-        FROM v_{table}
+        FROM v_{table} r
     """).fetchone()
     print(f'  v_{table}: {mapped:,}/{total:,} filas con municipio '
-          f'({by_code:,} por código de habilitación)')
+          f'({by_code:,} por código, {mapped - by_code:,} por nombre)')
 
 
 # ---------------------------------------------------------------------------
@@ -452,13 +457,13 @@ def build_all(db_path: 'str | Path') -> None:
             except Exception as e:
                 log.warning(f'geo_normalize: error en {table} — {e}')
 
-        for table, hab_col, dept_col, mun_col in REPS_CODE_SOURCES:
+        for table, code_expr, dept_col, mun_col in CODE_FIRST_SOURCES:
             if table not in existing:
                 log.info(f'geo_normalize: {table} no existe, saltando.')
                 continue
             try:
                 _build_map_mun(con, table, dept_col, mun_col, dep_lk, mun_lk)
-                _create_view_reps(con, table, hab_col, dept_col, mun_col)
+                _create_view_code_first(con, table, code_expr, dept_col, mun_col)
                 n_views += 1
             except Exception as e:
                 log.warning(f'geo_normalize: error en {table} — {e}')

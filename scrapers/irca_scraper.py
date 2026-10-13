@@ -343,6 +343,34 @@ def _parse_irca(path: Path) -> pl.DataFrame | None:
     return df.filter(pl.col('anio').is_not_null())
 
 
+_MESES = ('ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO',
+          'AGOSTO', 'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE')
+
+
+def _data_stamp(df: pl.DataFrame) -> str | None:
+    """'YYYY_MM' of the latest period present in the data (mes holds Spanish names)."""
+    month_num = pl.col('mes').str.to_uppercase().replace_strict(
+        {m: i + 1 for i, m in enumerate(_MESES)}, default=None, return_dtype=pl.Int32)
+    latest = df.select((pl.col('anio') * 100 + month_num).max()).item()
+    return f'{latest // 100}_{latest % 100:02d}' if latest else None
+
+
+def _write_stamped(df: pl.DataFrame, parquet_dir: Path) -> Path | None:
+    """Write the export under its own latest period, not the run date.
+
+    Each SIVICAP export repeats earlier months; transform.py dedupes on
+    (anio, mes, codigo_mun) and prefers the newest file.
+    """
+    stamp = _data_stamp(df)
+    if stamp is None:
+        log.warning('IRCA: no se pudo determinar el periodo de los datos.')
+        return None
+    out = parquet_dir / f'irca_{stamp}.parquet'
+    df.write_parquet(out, compression='zstd')
+    print(f'  -> {out} ({len(df):,} filas, último periodo {stamp})')
+    return out
+
+
 def run(base_dir: str = None) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
@@ -350,28 +378,25 @@ def run(base_dir: str = None) -> None:
     parquet_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    stamp = datetime.now().strftime('%Y_%m')
-    parquet_path = parquet_dir / f'irca_{stamp}.parquet'
-
-    if parquet_path.exists():
-        print(f'irca_scraper: parquet existente {parquet_path}')
-        return
-
-    # Check for manually dropped CSV files in data/raw/irca_manual/
-    # Place any CSV downloaded from sivicap.ins.gov.co here and the scraper will pick it up.
+    # Manually downloaded CSVs (sivicap.ins.gov.co → data/raw/irca_manual/).
+    # Each one is ingested once and then moved to irca_manual/procesados/, so a
+    # stale file is never re-published as a new month.
     manual_dir = raw_dir / 'irca_manual'
-    manual_dir.mkdir(exist_ok=True)
-    manual_csvs = sorted(manual_dir.glob('*.csv'), key=lambda p: p.stat().st_mtime, reverse=True)
-    if manual_csvs:
-        src = manual_csvs[0]
+    done_dir = manual_dir / 'procesados'
+    done_dir.mkdir(parents=True, exist_ok=True)
+    manual_csvs = sorted(manual_dir.glob('*.csv'), key=lambda p: p.stat().st_mtime)
+    ingested = 0
+    for src in manual_csvs:
         print(f'irca_scraper: usando archivo manual {src.name}')
         df = _parse_irca(src)
-        if df is not None and not df.is_empty():
-            df.write_parquet(parquet_path, compression='zstd')
-            print(f'  -> {parquet_path} ({len(df):,} filas)')
-            print('irca_scraper OK')
-            return
-        print('irca_scraper: archivo manual no parseable, intentando SIVICAP...')
+        if df is None or df.is_empty() or _write_stamped(df, parquet_dir) is None:
+            log.warning(f'IRCA: archivo manual no parseable, se deja en su lugar: {src.name}')
+            continue
+        src.rename(done_dir / f"{datetime.now():%Y%m%d}_{src.name}")
+        ingested += 1
+    if ingested:
+        print(f'irca_scraper OK — {ingested} archivo(s) manual(es)')
+        return
 
     with tempfile.TemporaryDirectory() as tmpdir:
         print('irca_scraper: conectando a SIVICAP...')
@@ -389,9 +414,8 @@ def run(base_dir: str = None) -> None:
         print('irca_scraper: ADVERTENCIA — no se pudo parsear el archivo descargado.')
         return
 
-    df.write_parquet(parquet_path, compression='zstd')
-    print(f'  -> {parquet_path} ({len(df):,} filas)')
-    print('irca_scraper OK')
+    if _write_stamped(df, parquet_dir):
+        print('irca_scraper OK')
 
 
 if __name__ == '__main__':
