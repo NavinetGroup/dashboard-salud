@@ -3,10 +3,10 @@
 
 import streamlit as st
 
-from charts import ring_pct, sparkline
-from data import get_monthly_series
-from registry import MODULES, SISBEN, Indicator, get
-from ui import fmt, footer, kpi_card, module_header, pending_card, trend_md, _v
+from charts import pyramid_regimen, ring_pct, sparkline
+from data import get_monthly_series, get_piramide
+from registry import MODULES, SISBEN, get
+from ui import footer, kpi_card, module_header, trend_md, _v
 
 sel = st.session_state['sel']
 color = MODULES['aseguramiento'][1]
@@ -14,7 +14,7 @@ row, prev = sel.entity_row, sel.prev_entity
 
 module_header('aseguramiento', 'Indicadores de cobertura y afiliación', sel)
 
-# EPS counts (pending BDUA) + EPS intervenidas + affiliated population by regime
+# EPS with affiliates (BDUA) + EPS intervenidas + affiliated population by regime
 top = [get(k) for k in ('eps_total', 'eps_contrib', 'eps_subs', 'eps_interv', 'afil_subs', 'afil_contrib')]
 for col, ind in zip(st.columns(6), top):
     with col:
@@ -38,10 +38,20 @@ with c_ring:
                       'MinSalud limita la cobertura municipal a 100%</div>',
                     unsafe_allow_html=True)
 with c_pyr:
-    pending_card('aseguramiento', Indicator(
-        'piramide', 'Pirámide poblacional afiliada (subsidiado / contributivo)', None, icon='stacked_bar_chart',
-        pending='BDUA por sexo y grupo de edad (datos.gov.co): por integrar. Solo publica el mes '
-                'vigente, por lo que se archivará una copia mensual.'))
+    level = 'municipio' if sel.use_mun else 'departamento'
+    pyr = get_piramide(level, sel.mun_code if sel.use_mun else sel.dept_code)
+    with st.container(border=True, key='card-aseguramiento-piramide'):
+        st.markdown(':material/stacked_bar_chart: <span class="fct-label">Pirámide poblacional '
+                    'afiliada</span>', unsafe_allow_html=True)
+        if pyr.empty:
+            st.caption('Sin datos BDUA para esta entidad.')
+        else:
+            tot = pyr.groupby('regimen')['afiliados'].sum()
+            st.plotly_chart(pyramid_regimen(pyr), use_container_width=True, key='piramide')
+            st.markdown(
+                f'<div class="fct-period">Subsidiado {tot.get("subsidiado", 0):,.0f} · '
+                f'Contributivo {tot.get("contributivo", 0):,.0f} afiliados · BDUA con corte '
+                f'{str(pyr["fecha_corte"].iloc[0])[:10]}</div>'.replace(',', '.'), unsafe_allow_html=True)
 
 st.markdown('#### Afiliados al régimen subsidiado sin Sisbén IV')
 code = sel.mun_code if sel.use_mun else sel.dept_code

@@ -24,6 +24,7 @@ Estos scrapers descargan datos sin intervención humana:
 | REPS (6 endpoints) | Login "invitado" automático en `prestadores.minsalud.gov.co` |
 | Afiliación | ZIPs mensuales en `minsalud.gov.co` |
 | SuperSalud IPS/EPS | Excel directo en `docs.supersalud.gov.co` |
+| BDUA (EPS por territorio, pirámide de afiliados) | API de datos.gov.co (`d7a5-cnra`, `tq4m-hmg2`). Solo publica el mes vigente: cada corrida archiva su foto en `data/parquet/bdua_*_YYYY_MM.parquet` (no borrarlas: son la única serie histórica) |
 | INS PDFs (6 indicadores) | URLs públicas del INS |
 
 Para correr el ciclo completo:

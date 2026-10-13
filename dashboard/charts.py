@@ -397,3 +397,34 @@ def sparkline(x: list, y: list, color: str = '#26A69A') -> go.Figure:
     fig.update_layout(height=70, margin={'t': 0, 'b': 0, 'l': 0, 'r': 0}, showlegend=False,
                       xaxis={'visible': False}, yaxis={'visible': False}, plot_bgcolor='white')
     return fig
+
+
+def pyramid_regimen(df: pd.DataFrame) -> go.Figure:
+    """Affiliated-population pyramid: subsidised to the left, contributory to the
+    right (FCT Aseguramiento), one bar per age group, split by sex."""
+    fig = go.Figure()
+    if df.empty:
+        return fig
+    ages = (df[['grupo_edad', 'orden_edad']].drop_duplicates().sort_values('orden_edad')['grupo_edad'].tolist())
+    styles = {('subsidiado', 'Femenino'): '#1E88E5', ('subsidiado', 'Masculino'): '#64B5F6',
+              ('contributivo', 'Femenino'): '#26A69A', ('contributivo', 'Masculino'): '#80CBC4'}
+    for (reg, sexo), color in styles.items():
+        d = df[(df['regimen'] == reg) & (df['sexo'] == sexo)].set_index('grupo_edad').reindex(ages)
+        vals = d['afiliados'].fillna(0)
+        fig.add_bar(y=ages, x=-vals if reg == 'subsidiado' else vals, orientation='h',
+                    name=f'{reg.title()} — {sexo.lower()}', marker_color=color,
+                    customdata=vals, hovertemplate='%{y}: %{customdata:,.0f}<extra>%{fullData.name}</extra>')
+    m = df.groupby(['regimen', 'grupo_edad'])['afiliados'].sum().max()
+    ticks = [-m, -m / 2, 0, m / 2, m]
+    fig.update_layout(barmode='relative', height=360, bargap=0.12, plot_bgcolor='white',
+                      margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
+                      legend={'orientation': 'h', 'y': -0.12, 'font': {'size': 11}},
+                      # symmetric around 0, so the two regimes read as one pyramid
+                      xaxis={'range': [-m * 1.08, m * 1.08], 'tickvals': ticks,
+                             'ticktext': [f'{abs(t):,.0f}'.replace(',', '.') for t in ticks],
+                             'gridcolor': '#F0F0F0', 'zeroline': True, 'zerolinecolor': '#90A4AE'},
+                      annotations=[{'text': '◄ Subsidiado', 'x': 0.02, 'y': 1.04, 'xref': 'paper',
+                                    'yref': 'paper', 'showarrow': False, 'font': {'color': '#1E88E5'}},
+                                   {'text': 'Contributivo ►', 'x': 0.98, 'y': 1.04, 'xref': 'paper',
+                                    'yref': 'paper', 'showarrow': False, 'font': {'color': '#26A69A'}}])
+    return fig

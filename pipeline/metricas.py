@@ -109,6 +109,32 @@ _CAP_TYPES = """COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_c
                                            'Intensiva Quemado pediátrica', 'Cuna Intensiva Pediátrica')), 0)
                AS uci_pediatricas"""
 
+# BDUA: an EPS appears under one code per regime plus "-CM" mobility codes
+# (e.g. EPSS41 NUEVA EPS S.A. and EPSS37 NUEVA EPS S.A. -CM). The entity is the
+# name without the -CM suffix; an EPS counts for a regime only with that
+# regime's own code. BDUA lists EPS *with affiliates* in each territory (the
+# authorisation by territory is not published). The key ignores punctuation
+# (the same EPS appears with and without a closing quote). Entidades Adaptadas
+# (codes EAS*, e.g. Fondo Pasivo Ferrocarriles) are not EPS and are excluded.
+_EPS_KEY = ("TRIM(REGEXP_REPLACE(REGEXP_REPLACE(UPPER(STRIP_ACCENTS(ent_nombre)), "
+            "'\\s*-\\s*CM\\s*$', ''), '[^A-Z0-9]+', ' ', 'g'))")
+_EPS_CM = "REGEXP_MATCHES(UPPER(ent_nombre), '-\\s*CM\\s*$')"
+
+
+def _eps_counts(group_cols: str, where: str) -> str:
+    return f"""
+    SELECT {group_cols}{', ' if group_cols else ''}
+           COUNT(DISTINCT k) AS eps_total,
+           COUNT(DISTINCT k) FILTER (WHERE regimen = 'contributivo' AND NOT cm) AS eps_contributivo,
+           COUNT(DISTINCT k) FILTER (WHERE regimen = 'subsidiado' AND NOT cm) AS eps_subsidiado,
+           CAST(MAX(fecha_corte) AS VARCHAR) AS eps_fecha_corte
+    FROM (SELECT *, {_EPS_KEY} AS k, {_EPS_CM} AS cm FROM v_bdua_eps
+          WHERE afiliados > 0 AND ent_id NOT LIKE 'EAS%' AND {where})
+    {('GROUP BY ' + group_cols) if group_cols else ''}"""
+
+
+_EPS_COLS = ('eps_total', 'eps_contributivo', 'eps_subsidiado', 'eps_fecha_corte')
+
 # Afiliación: subsidised-regime affiliates without Sisbén IV classification (FCT Aseguramiento 8–11)
 _SISBEN_SRC = {
     'afil_sin_sisben':             '"Afil. Subsidiado sin SISBEN IV"',
@@ -316,8 +342,16 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
     select_extra += [
         'NULL::BIGINT AS ips_intervenidas',
         'NULL::BIGINT AS eps_intervenidas',
-        'NULL::BIGINT AS eps_autorizadas',
     ]
+
+    # ── EPS con afiliados en el municipio (BDUA, foto vigente) ──────────────
+    if ev.get('v_bdua_eps'):
+        ctefile.append(('eps', _eps_counts('geo_dep_codigo, geo_mun_codigo', 'geo_mun_codigo IS NOT NULL')))
+        join_clauses.append("LEFT JOIN eps   ON gm.dep_codigo = eps.geo_dep_codigo AND gm.mun_codigo = eps.geo_mun_codigo")
+        select_extra += [f'eps.{c}' for c in _EPS_COLS]
+    else:
+        select_extra += ['NULL::BIGINT AS eps_total', 'NULL::BIGINT AS eps_contributivo',
+                         'NULL::BIGINT AS eps_subsidiado', 'NULL::VARCHAR AS eps_fecha_corte']
 
     # ── IRCA (latest measurement per municipality, ≤ 12 months old) ──────────
     if ev.get('v_irca'):
@@ -615,7 +649,14 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     else:
         select_extra.append('NULL::BIGINT AS eps_intervenidas')
 
-    select_extra.append('NULL::BIGINT AS eps_autorizadas')
+    # ── EPS con afiliados en el departamento (BDUA) ──────────────────────────
+    if ev.get('v_bdua_eps'):
+        ctefile.append(('eps', _eps_counts('geo_dep_codigo', 'geo_dep_codigo IS NOT NULL')))
+        join_clauses.append("LEFT JOIN eps   ON gd.dep_codigo = eps.geo_dep_codigo")
+        select_extra += [f'eps.{c}' for c in _EPS_COLS]
+    else:
+        select_extra += ['NULL::BIGINT AS eps_total', 'NULL::BIGINT AS eps_contributivo',
+                         'NULL::BIGINT AS eps_subsidiado', 'NULL::VARCHAR AS eps_fecha_corte']
 
     # ── Afiliación (latest month, summed; coverage = Σafiliados / Σpoblación) ─
     # MinSalud caps municipal Cobertura at 100 %; the department ratio is capped
@@ -872,6 +913,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
     FROM ({_afil_latest(year, month, caps)})""",
                       ['cobertura_pct', 'afiliados_subsidiado', 'afiliados_contributivo',
                        *_SISBEN_COLS, 'periodo_afiliacion']))
+    if ev.get('v_bdua_eps'):
+        parts.append(('eps', _eps_counts('', 'TRUE'), list(_EPS_COLS)))
     if ev.get('v_reps_capacidad'):
         parts.append(('cap', f"""
     SELECT {_CAP_TYPES}
@@ -1006,6 +1049,33 @@ def _build_period_tables(con: duckdb.DuckDBPyConnection, ev: dict[str, bool]) ->
             print(f'  {table}: {n:,} filas ({len(rows)} periodos)')
 
 
+_EDAD_ORDEN = {'< 1': 0, '1 a 5': 1, '5 a 15': 2, '15 a 19': 3, '19 a 45': 4, '45 a 50': 5,
+               '50 a 55': 6, '55 a 60': 7, '60 a 65': 8, '65 a 70': 9, '70 a 75': 10, '> 75': 11}
+
+
+def _build_piramide(con: duckdb.DuckDBPyConnection) -> None:
+    """piramide_afiliados: affiliates by regime × sex × age group (BDUA) for every
+    municipality, department and the nation (nivel / codigo; nación = codigo 0)."""
+    orden = ' '.join(f"WHEN '{k}' THEN {v}" for k, v in _EDAD_ORDEN.items())
+    base = f"""SELECT regimen, sexo, grupo_edad, CASE grupo_edad {orden} ELSE 99 END AS orden_edad,
+                      afiliados, fecha_corte, geo_dep_codigo, geo_mun_codigo FROM v_bdua_piramide"""
+    con.execute(f"""
+        CREATE OR REPLACE TABLE piramide_afiliados AS
+        WITH b AS ({base})
+        SELECT 'municipio' AS nivel, geo_mun_codigo AS codigo, regimen, sexo, grupo_edad, orden_edad,
+               SUM(afiliados) AS afiliados, MAX(fecha_corte) AS fecha_corte
+        FROM b WHERE geo_mun_codigo IS NOT NULL GROUP BY ALL
+        UNION ALL
+        SELECT 'departamento', geo_dep_codigo, regimen, sexo, grupo_edad, orden_edad,
+               SUM(afiliados), MAX(fecha_corte)
+        FROM b WHERE geo_dep_codigo IS NOT NULL GROUP BY ALL
+        UNION ALL
+        SELECT 'nacional', 0, regimen, sexo, grupo_edad, orden_edad, SUM(afiliados), MAX(fecha_corte)
+        FROM b GROUP BY ALL""")
+    n = con.execute("SELECT COUNT(*) FROM piramide_afiliados").fetchone()[0]
+    print(f'  piramide_afiliados: {n:,} filas')
+
+
 def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
                   year: int, month: str | None) -> dict:
     """The period each source shows for selection (year, month): the latest INS
@@ -1053,6 +1123,7 @@ def build_all(db_path: 'str | Path') -> None:
             'v_ins_desnutricion_aguda', 'v_ins_intento_suicidio',
             'v_ins_mortalidad_menores5', 'v_ins_dengue', 'v_ins_violencia_genero',
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
+            'v_bdua_eps', 'v_bdua_piramide',
         ]}
         missing = [k for k, v in ev.items() if not v]
         if missing:
@@ -1066,6 +1137,8 @@ def build_all(db_path: 'str | Path') -> None:
             print(f'  {v}: {n:,} filas')
 
         _build_period_tables(con, ev)
+        if ev.get('v_bdua_piramide'):
+            _build_piramide(con)
         print('metricas OK — vistas v_metricas_* y tablas metricas_*_periodo creadas')
     except Exception as e:
         print(f'metricas: ERROR — {e}')

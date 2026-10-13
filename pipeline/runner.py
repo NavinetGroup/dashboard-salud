@@ -39,6 +39,7 @@ import scrapers.reps_scraper as reps           # multi-endpoint (all 6 REPS quer
 import scrapers.irca_scraper as irca
 import scrapers.afiliacion_scraper as afiliacion
 import scrapers.supersalud_scraper as supersalud
+import scrapers.bdua_scraper as bdua
 import scrapers.ins_pdf_scraper as ins_pdf
 import pipeline.transform as transform
 import pipeline.quality as quality
@@ -163,6 +164,7 @@ def run_monthly() -> int:
         (irca.run, 'irca_scraper'),
         (afiliacion.run, 'afiliacion_scraper'),
         (supersalud.run, 'supersalud_scraper'),
+        (bdua.run, 'bdua_scraper'),            # monthly snapshot: archive every run
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])
@@ -182,6 +184,7 @@ def run_all() -> int:
         (irca.run, 'irca_scraper'),
         (afiliacion.run, 'afiliacion_scraper'),
         (supersalud.run, 'supersalud_scraper'),
+        (bdua.run, 'bdua_scraper'),            # monthly snapshot: archive every run
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])

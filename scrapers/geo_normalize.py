@@ -95,6 +95,43 @@ MUN_ALIASES: dict[tuple[int, str], int] = {
     (86, 'LEGUIZAMO'): 86573,
     (94, 'BARRANCO MINAS'): 94343,
     (97, 'PAPUNAUA'): 97777,
+    # BDUA (datos.gov.co) spellings, verified 2026-10-13
+    (91, 'MIRITINPARANA'): 91460,
+    (91, 'PTO SANTANDER'): 91669,
+    (5, 'ANTIOQUIA'): 5042,             # Santa Fe de Antioquia
+    (5, 'BOLIVAR'): 5101,               # Ciudad Bolívar
+    (5, 'CARMEN DE VIBORAL'): 5148,
+    (5, 'SANTUARIO'): 5697,
+    (8, 'POLO NUEVO'): 8558,
+    (15, 'TUTASA'): 15839,
+    (17, 'SAN JOSE DE CALDAS'): 17665,
+    (18, 'SAN JOSE DE FRAGUA'): 18610,
+    (19, 'PATIA EL BORDO'): 19532,
+    (20, 'CODAZZI'): 20013,
+    (20, 'LA PAZ ROBLES'): 20621,
+    (25, 'EL PENOL'): 25258,            # El Peñón (Cundinamarca)
+    (25, 'S ANTONIO TEQUENDAMA'): 25645,
+    (25, 'UBATE'): 25843,               # Villa de San Diego de Ubaté
+    (27, 'CANTON DE SAN PABLO'): 27135,
+    (27, 'EL CARMEN'): 27245,           # El Carmen de Atrato
+    (27, 'ITSMINA'): 27361,
+    (47, 'SABANA DE SAN ANGEL'): 47660,
+    (47, 'SAN SEBASTIAN BUENAVIST'): 47692,
+    (50, 'LA URIBE'): 50370,
+    (50, 'SAN CARLOS GUAROA'): 50680,
+    (50, 'VISTA HERMOSA'): 50711,
+    (52, 'EL TABLON'): 52258,           # El Tablón de Gómez
+    (52, 'FRANCIS PIZARRO'): 52520,
+    (52, 'LEYVA'): 52405,
+    (66, 'DOS QUEBRADAS'): 66170,
+    (68, 'EL CARMEN'): 68235,           # El Carmen de Chucurí
+    (70, 'TOLU'): 70820,                # Santiago de Tolú (not Tolú Viejo)
+    (70, 'TOLUVIEJO'): 70823,
+    (73, 'GUAYABAL'): 73055,            # Armero (Guayabal)
+    (73, 'VILLA HERMOSA'): 73870,
+    (76, 'BUGA'): 76111,                # Guadalajara de Buga
+    (47, 'EL PIJINO DEL CARMEN'): 47545,  # Pijiño del Carmen
+    (94, 'MORICHAL NUEVO'): 94888,
 }
 
 # Sources that carry a DIVIPOLA municipality code: the code wins, and name
@@ -126,6 +163,8 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('demografico_etnico',     'codigo_dep',          'codigo_mun',  True,  None),
     ('irca',                   'codigo_dep',          'codigo_mun',  True,  None),
     # afiliacion and reps_* are handled via CODE_FIRST_SOURCES
+    ('bdua_eps',               'departamento',        'municipio',   False, None),
+    ('bdua_piramide',          'departamento',        'municipio',   False, None),
     # ins_mortalidad_materna has dept-level rows (entidad_territorial) + mun rows (departamento/municipio)
     ('ins_mortalidad_materna', 'departamento',        'municipio',   False, 'entidad_territorial'),
     ('ins_sifilis_congenita',  'entidad_territorial', None,          False, None),
@@ -157,7 +196,8 @@ def _key(s) -> str:
     """Canonical matching key: uppercase, strip accents, collapse non-alphanum to space."""
     if not s:
         return ''
-    s = str(s).upper().strip()
+    # BDUA exports carry a mis-encoded Ñ as '¥' ('PUERTO NARI¥O')
+    s = str(s).upper().strip().replace('¥', 'Ñ')
     s = unicodedata.normalize('NFD', s)
     s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
     s = re.sub(r'[^A-Z0-9 ]', ' ', s)

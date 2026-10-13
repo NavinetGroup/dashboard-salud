@@ -309,6 +309,21 @@ def get_monthly_series(level: str, cols: tuple[str, ...], code: int | None = Non
 
 
 @st.cache_data(ttl=3600)
+def get_piramide(level: str, code: int | None) -> pd.DataFrame:
+    """Affiliates by regime × sex × age group (BDUA, current snapshot)."""
+    con = _connect()
+    try:
+        if not _has_table(con, 'piramide_afiliados'):
+            return pd.DataFrame()
+        return con.execute(
+            "SELECT regimen, sexo, grupo_edad, orden_edad, afiliados, fecha_corte "
+            "FROM piramide_afiliados WHERE nivel = ? AND codigo = ? ORDER BY orden_edad",
+            [level, 0 if level == 'nacional' else int(code)]).df()
+    finally:
+        con.close()
+
+
+@st.cache_data(ttl=3600)
 def get_nat_metrics(year: int | None = None, month: str | None = None) -> pd.Series:
     """National reference row (true national rates). Empty on a DB built before it existed."""
     con = _connect()

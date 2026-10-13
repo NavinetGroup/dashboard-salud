@@ -43,6 +43,7 @@ _TRACKED = [
     'reps_prestadores', 'reps_sedes', 'reps_servicios', 'reps_capacidad',
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
+    'bdua_eps', 'bdua_piramide',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -130,6 +131,8 @@ class _Checks:
             ('v_reps_servicios', 'TRUE', 99.5, 'error'),
             ('v_reps_capacidad', 'TRUE', 99.5, 'error'),
             ('v_irca', 'TRUE', 99.5, 'error'),
+            # BDUA: 'DPTO. GUAINIA' / 'DPTO. VAUPES' rows have no municipality (≈0.03 %)
+            ('v_bdua_eps', 'TRUE', 99.5, 'error'),
             # INS PDF tables carry footnotes / header residue as rows
             ('v_ins_desnutricion_aguda', 'municipio IS NOT NULL', 90, 'warn'),
             ('v_ins_intento_suicidio', 'municipio IS NOT NULL', 90, 'warn'),
@@ -190,6 +193,17 @@ class _Checks:
             self.add('afiliacion_variacion_mensual', 'warn', not jumps,
                      'variación > 3 %: ' + '; '.join(f'{a}-{m}: {p:,.0f} → {t:,.0f}' for a, m, t, p in jumps)
                      if jumps else 'variación mensual del total ≤ 3 %')
+
+        # BDUA (ADRES snapshot) and the MinSalud afiliación cut are different
+        # products, but national totals by regime should agree within a few %.
+        if self.has('bdua_eps', 'v_metricas_nacional'):
+            for reg, col in (('subsidiado', 'afiliados_subsidiado'), ('contributivo', 'afiliados_contributivo')):
+                bdua = self.one(f"SELECT SUM(afiliados) FROM bdua_eps WHERE regimen = '{reg}'")[0]
+                afil = self.one(f"SELECT {col} FROM v_metricas_nacional")[0]
+                if bdua and afil:
+                    diff = (bdua - afil) / afil
+                    self.add(f'bdua_vs_afiliacion_{reg}', 'warn', abs(diff) <= 0.05,
+                             f'BDUA {bdua:,.0f} vs afiliación {afil:,.0f} ({diff:+.1%})')
 
     # -- 5. plausible ranges ---------------------------------------------------
     def ranges(self) -> None:

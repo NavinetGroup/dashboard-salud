@@ -240,6 +240,15 @@ def transform_supersalud(con: duckdb.DuckDBPyConnection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Source: BDUA (datos.gov.co) — monthly snapshot of affiliates by EPS / age / sex
+# ---------------------------------------------------------------------------
+
+def transform_bdua(con: duckdb.DuckDBPyConnection) -> None:
+    for kind in ('eps', 'piramide'):
+        _register_latest_snapshot(con, f'bdua_{kind}')
+
+
+# ---------------------------------------------------------------------------
 # Source: INS PDF epidemiológico (todos los eventos)
 # ---------------------------------------------------------------------------
 
@@ -320,6 +329,9 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
 
         print('transform: procesando INS PDF...')
         transform_ins_pdf(con)
+
+        print('transform: procesando BDUA...')
+        transform_bdua(con)
 
         print('transform: procesando DIFT18...')
         transform_dift18(con)

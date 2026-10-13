@@ -1,0 +1,8 @@
+# Theme for the FCT design (light, Supersalud teal). Streamlit reads this from
+# the working directory: the repo root locally and /app in the Docker image.
+[theme]
+base = "light"
+primaryColor = "#0B5D5E"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F2F6F7"
+textColor = "#263238"

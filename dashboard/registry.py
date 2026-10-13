@@ -39,7 +39,7 @@ MODULES = {
 
 SRC = {
     'dane':        'DANE — Proyecciones de población',
-    'bdua':        'MSPS — BDUA / cifras de afiliación',
+    'bdua':        'ADRES / MSPS — BDUA (datos.gov.co) y cifras de afiliación MSPS',
     'reps':        'MSPS — REPS',
     'supersalud':  'Supersalud — entidades en medida especial',
     'sivicap':     'INS — SIVICAP',
@@ -99,12 +99,14 @@ SALUD_PUBLICA = [
 
 # ── Aseguramiento ─────────────────────────────────────────────────────────────
 ASEGURAMIENTO = [
-    Indicator('eps_total', 'Total EPS autorizadas', None, 'EPS', icon='apartment', trend='',
-              pending='BDUA por municipio (datos.gov.co, por integrar).'),
-    Indicator('eps_contrib', 'EPS régimen contributivo', None, 'EPS', icon='groups', trend='',
-              pending='BDUA por municipio (datos.gov.co, por integrar).'),
-    Indicator('eps_subs', 'EPS régimen subsidiado', None, 'EPS', icon='diversity_1', trend='',
-              pending='BDUA por municipio (datos.gov.co, por integrar).'),
+    # BDUA lists the EPS with affiliates in each territory; the authorisation per
+    # territory is not published, so the cards say "con afiliados".
+    Indicator('eps_total', 'Total EPS con afiliados', 'eps_total', 'EPS', icon='apartment',
+              trend='', source='bdua', period_col='eps_fecha_corte'),
+    Indicator('eps_contrib', 'EPS régimen contributivo', 'eps_contributivo', 'EPS', icon='groups',
+              trend='', source='bdua', period_col='eps_fecha_corte'),
+    Indicator('eps_subs', 'EPS régimen subsidiado', 'eps_subsidiado', 'EPS', icon='diversity_1',
+              trend='', source='bdua', period_col='eps_fecha_corte'),
     Indicator('eps_interv', 'EPS intervenidas', 'eps_intervenidas', 'EPS', icon='policy',
               trend='', source='supersalud', dept_only=True),
     Indicator('afil_subs', 'Población afiliada régimen subsidiado', 'afiliados_subsidiado',
