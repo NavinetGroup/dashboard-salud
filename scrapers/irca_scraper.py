@@ -371,7 +371,7 @@ def _write_stamped(df: pl.DataFrame, parquet_dir: Path) -> Path | None:
         log.warning('IRCA: no se pudo determinar el periodo de los datos.')
         return None
     out = parquet_dir / f'irca_{stamp}.parquet'
-    df.write_parquet(out, compression='zstd')
+    df.write_parquet(out, compression='zstd', use_pyarrow=True)
     print(f'  -> {out} ({len(df):,} filas, último periodo {stamp})')
     return out
 

@@ -33,7 +33,7 @@ DB_PATH = BASE_DIR / 'data' / 'informe_regional.duckdb'
 def _write_parquet(df: pl.DataFrame, name: str) -> Path:
     out = PARQUET_DIR / f'{name}.parquet'
     out.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out, compression='zstd')
+    df.write_parquet(out, compression='zstd', use_pyarrow=True)
     log.info(f'Parquet escrito: {out} ({len(df):,} filas)')
     return out
 
@@ -279,13 +279,20 @@ def transform_dift18(con: duckdb.DuckDBPyConnection) -> None:
 # Entry point
 # ---------------------------------------------------------------------------
 
-def run(base_dir: str = None) -> None:
+def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
+    """Rebuild every table and view from data/parquet into db_path.
+
+    db_path defaults to the live DB; pipeline/runner.py passes a separate build
+    file and only publishes it after the quality checks pass.
+    """
     global BASE_DIR, RAW_DIR, PARQUET_DIR, DB_PATH
     if base_dir:
         BASE_DIR = Path(base_dir)
         RAW_DIR = BASE_DIR / 'data' / 'raw'
         PARQUET_DIR = BASE_DIR / 'data' / 'parquet'
         DB_PATH = BASE_DIR / 'data' / 'informe_regional.duckdb'
+    if db_path:
+        DB_PATH = Path(db_path)
 
     PARQUET_DIR.mkdir(parents=True, exist_ok=True)
 

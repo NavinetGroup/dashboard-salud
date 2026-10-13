@@ -213,13 +213,13 @@ def run() -> None:
 
     df_dept_all = pl.concat([df_dept, df_dist], how='diagonal_relaxed')
     out_dept = OUT_DIR / 'dift18_departamento.parquet'
-    df_dept_all.write_parquet(out_dept, compression='zstd')
+    df_dept_all.write_parquet(out_dept, compression='zstd', use_pyarrow=True)
     print(f'  dift18_departamento: {len(df_dept)} depts + {len(df_dist)} distritos = {len(df_dept_all)} filas -> {out_dept.name}')
 
     # Municipality sheet
     df_mun = _read_mun_sheet(wb['7_Result_Munic'])
     out_mun = OUT_DIR / 'dift18_municipio.parquet'
-    df_mun.write_parquet(out_mun, compression='zstd')
+    df_mun.write_parquet(out_mun, compression='zstd', use_pyarrow=True)
     print(f'  dift18_municipio: {len(df_mun)} filas -> {out_mun.name}')
 
     wb.close()

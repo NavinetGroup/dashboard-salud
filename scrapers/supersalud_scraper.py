@@ -150,7 +150,7 @@ def _scrape_xlsx(url: str, label: str, retries: int = 3) -> pl.DataFrame | None:
     for attempt in range(retries):
         try:
             r = requests.get(url, headers=HEADERS, timeout=(10, 120),
-                             stream=True, verify=False)
+                             stream=True)
             if r.status_code != 200:
                 log.warning(f'{label}: HTTP {r.status_code} — {url}')
                 return None
@@ -197,7 +197,7 @@ def run(base_dir: str = None) -> None:
             continue
         df = _scrape_xlsx(url, kind)
         if df is not None:
-            df.write_parquet(out, compression='zstd')
+            df.write_parquet(out, compression='zstd', use_pyarrow=True)
             print(f'  -> {out} ({len(df):,} filas)')
         else:
             print(f'  -> {kind}: sin datos o error')
@@ -211,6 +211,4 @@ def run(base_dir: str = None) -> None:
 
 if __name__ == '__main__':
     logging.basicConfig(level=logging.INFO, format='%(levelname)s %(message)s')
-    import urllib3
-    urllib3.disable_warnings()
     run()

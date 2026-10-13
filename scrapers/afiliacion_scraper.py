@@ -334,7 +334,7 @@ def run(base_dir: str = None, year: int = None, month: int = None, lookback: int
             failed.append(f'{y}-{m:02d} (Excel ilegible)')
             continue
         df = _normalize_df(df, *period)
-        df.write_parquet(out, compression='zstd')
+        df.write_parquet(out, compression='zstd', use_pyarrow=True)
         written.append(out.name)
         print(f'  -> {out} ({len(df):,} filas)')
 

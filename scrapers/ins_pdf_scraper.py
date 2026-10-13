@@ -1072,7 +1072,7 @@ def scrape_event_period(event: dict, parquet_dir: Path,
         df = df.with_columns(extra)
         suffix = f'_tabla{i}' if len(tables) > 1 else ''
         fpath = parquet_dir / f'ins_{key}_{stamp}{suffix}.parquet'
-        df.write_parquet(fpath, compression='zstd')
+        df.write_parquet(fpath, compression='zstd', use_pyarrow=True)
         log.info(f'INS [{key}]: {fpath.name} ({len(df):,} filas)')
         written.append(fpath)
 

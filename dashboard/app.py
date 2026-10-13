@@ -129,8 +129,15 @@ def _nat(col: str):
     return s.mean() if s.notna().any() else None
 
 
+# INS publishes these only for the municipalities it lists (the highest
+# burden), so the pooled figure is not a national rate and must not say so.
+_NAT_LBL_BOLETIN = {'prevalencia_desnutricion_aguda', 'tasa_intento_suicidio'}
+
+
 def _nat_lbl(col: str) -> str:
     has_nat = col in nat_ref.index and _v(nat_ref, col) is not None
+    if has_nat and col in _NAT_LBL_BOLETIN:
+        return 'Mpios. listados INS'
     return 'Nacional' if has_nat else 'Prom. departamental'
 
 

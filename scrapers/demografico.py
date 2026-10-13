@@ -3,7 +3,7 @@
 DANE demographics scraper — population by age/sex and ethnic/racial groups.
 
 Reads Excel files from DANE, processes them in Python row-by-row, and writes
-directly to Parquet + DuckDB (no intermediate CSV).
+Parquet (no intermediate CSV). pipeline/transform.py loads it into DuckDB.
 """
 
 import logging
@@ -13,7 +13,6 @@ import unicodedata
 from io import BytesIO
 from pathlib import Path
 
-import duckdb
 import openpyxl
 import polars as pl
 import requests
@@ -117,24 +116,18 @@ def _col_names(rows, hr, hr2):
 def _write_parquet(df: pl.DataFrame, parquet_dir: Path, name: str) -> Path:
     out = parquet_dir / f'{name}.parquet'
     out.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out, compression='zstd')
+    # PyArrow writer: polars 1.40's native parquet sink intermittently panics
+    # (or segfaults) on this 11M-row frame — "dictionary keys is 100 but it must
+    # be < than the length of the dictionary values" (2026-10-13). All pipeline
+    # parquet writes use PyArrow for the same reason.
+    df.write_parquet(out, compression='zstd', use_pyarrow=True)
     return out
-
-
-def _register(con: duckdb.DuckDBPyConnection, name: str, path: Path) -> None:
-    con.execute(f"DROP TABLE IF EXISTS {name}")
-    con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_parquet('{path.as_posix()}')")
-    n = con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
-    print(f'  DuckDB [{name}]: {n:,} filas')
 
 
 def run(base_dir: str = None) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
-
-    con = duckdb.connect(str(db_path))
 
     # ------------------------------------------------------------------ #
     #  Edad / Sexo                                                         #
@@ -143,7 +136,6 @@ def run(base_dir: str = None) -> None:
     try:
         rows_age = _read_sheet(_download(URL_AGE), SHEET_AGE)
     except Exception as e:
-        con.close()
         raise ScrapeError(f'demografico: descarga edad/sexo falló — {e}') from e
 
     hr, hr2 = _detect_header(rows_age)
@@ -165,7 +157,6 @@ def run(base_dir: str = None) -> None:
                 age_sex_cols.append((i, m.group(1).upper(), int(m.group(2))))
 
     if not age_sex_cols:
-        con.close()
         raise ScrapeError('demografico: no se detectaron columnas de edades (¿cambió el formato DANE?)')
 
     # Row-by-row melt — avoids Polars unpivot on 11M rows
@@ -221,7 +212,6 @@ def run(base_dir: str = None) -> None:
         }
     )
     path_age = _write_parquet(df_age, parquet_dir, 'demografico_edad_sexo')
-    _register(con, 'demografico_edad_sexo', path_age)
     print(f'  -> {path_age}')
 
     # ------------------------------------------------------------------ #
@@ -231,7 +221,6 @@ def run(base_dir: str = None) -> None:
     try:
         rows_eth = _read_sheet(_download(URL_ETH), SHEET_ETH)
     except Exception as e:
-        con.close()
         raise ScrapeError(f'demografico: descarga étnico-racial falló — {e}') from e
 
     hr_e, hr2_e = _detect_header(rows_eth, key_any=('COD_DPTO', 'DEPARTAMENTO', 'DP'))
@@ -265,7 +254,6 @@ def run(base_dir: str = None) -> None:
             eth_cols_idx.append((i, c))
 
     if not eth_cols_idx:
-        con.close()
         raise ScrapeError('demografico: no se detectaron columnas étnicas (¿cambió el formato DANE?)')
 
     records_eth = []
@@ -318,10 +306,8 @@ def run(base_dir: str = None) -> None:
         }
     )
     path_eth = _write_parquet(df_eth, parquet_dir, 'demografico_etnico')
-    _register(con, 'demografico_etnico', path_eth)
     print(f'  -> {path_eth}')
 
-    con.close()
     print('demografico OK')
 
 

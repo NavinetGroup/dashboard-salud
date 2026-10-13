@@ -107,6 +107,18 @@ class _Checks:
                 continue
             dups = self.one(f"SELECT COUNT(*) FROM (SELECT {k} FROM {t} GROUP BY ALL HAVING COUNT(*) > 1)")[0]
             self.add(f'{t}_sin_duplicados', 'error', dups == 0, f'{dups} llaves ({k}) repetidas')
+        # A REPS record split by a line break inside a field becomes half-rows with
+        # shifted columns, and footer lines ('Fecha corte REPS: ...') can be read as
+        # data: both show up as an invalid habilitation code. Valid codes are the
+        # 5-digit DIVIPOLA prefix + 5 characters (MinSalud has typed 'O' for '0').
+        for t in ('reps_prestadores', 'reps_sedes', 'reps_servicios', 'reps_capacidad',
+                  'reps_medidas_seguridad', 'reps_sanciones'):
+            if not self.has(t):
+                continue
+            n = self.one(f"""SELECT COUNT(*) FROM {t} WHERE NOT regexp_matches(
+                             COALESCE(codigo_habilitacion, ''), '^[0-9]{{4,5}}[0-9A-Z]{{5}}$')""")[0]
+            self.add(f'{t}_filas_completas', 'error', n == 0,
+                     f'{n} filas con código de habilitación inválido (¿filas partidas o pie de página?)')
 
     # -- 3. geographic matching ----------------------------------------------
     def geo_match(self) -> None:
@@ -294,9 +306,10 @@ def check(db_path: 'str | Path', today: date | None = None) -> list[Result]:
         con.close()
 
 
-def run(base_dir: str | None = None) -> None:
+def run(base_dir: str | None = None, db_path: 'str | Path | None' = None) -> None:
     """Runner entry point: print the report; raise QualityError on any failed error-level check."""
-    db = Path(base_dir) / 'data' / 'informe_regional.duckdb' if base_dir else DB_PATH
+    db = (Path(db_path) if db_path else
+          Path(base_dir) / 'data' / 'informe_regional.duckdb' if base_dir else DB_PATH)
     results = check(db)
     failed_errors = [r for r in results if not r.ok and r.level == 'error']
     failed_warns = [r for r in results if not r.ok and r.level == 'warn']

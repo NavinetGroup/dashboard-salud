@@ -136,19 +136,33 @@ def _leer_csv_tolerante(path: str) -> pl.DataFrame:
     """Read CSV with latin1 encoding, auto-detecting | or ; separator, repairing malformed rows."""
     rows = []
     cols = []
+    stitched = 0
     with open(path, 'r', encoding='latin1', errors='replace') as f:
         header = f.readline().rstrip('\n\r').replace('﻿', '')
         sep = '|' if len(header.split('|')) >= len(header.split(';')) else ';'
         cols = [_limpia(c) for c in header.split(sep)]
         N = len(cols)
+        pending = None
         for line in f:
-            parts = line.rstrip('\n\r').split(sep)
-            if len(parts) == N:
-                rows.append(parts)
-            elif len(parts) > N:
-                rows.append(parts[:N - 1] + [sep.join(parts[N - 1:])])
-            else:
-                rows.append(parts + [''] * (N - len(parts)))
+            line = line.rstrip('\n\r')
+            if pending is not None:
+                # A field contained a line break: the previous line was only the
+                # first part of this record. Padding it instead (as before) split one
+                # provider into two half-rows with shifted columns (2026-10 snapshot).
+                line = f'{pending} {line}'
+                stitched += 1
+            parts = line.split(sep)
+            if len(parts) < N:
+                pending = line
+                continue
+            pending = None
+            if len(parts) > N:
+                parts = parts[:N - 1] + [sep.join(parts[N - 1:])]
+            rows.append(parts)
+        if pending is not None:
+            log.warning(f'REPS {Path(path).name}: última línea incompleta descartada ({len(pending.split(sep))}/{N} campos)')
+    if stitched:
+        log.info(f'REPS {Path(path).name}: {stitched} línea(s) partidas por saltos de línea reunidas')
     if not rows:
         return pl.DataFrame({c: [] for c in cols})
     # Build polars DataFrame from lists
@@ -298,7 +312,7 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
             df = _scrape_endpoint(driver, ep, download_dir, stamp)
             if df is not None and len(df) > 0:
                 out = parquet_dir / f"reps_{ep['name']}_{stamp}.parquet"
-                df.write_parquet(out, compression='zstd')
+                df.write_parquet(out, compression='zstd', use_pyarrow=True)
                 print(f'  -> {out} ({len(df):,} filas)')
             else:
                 print(f'  -> REPS [{ep["name"]}]: sin datos o error')
