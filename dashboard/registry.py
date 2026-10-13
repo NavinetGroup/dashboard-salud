@@ -80,9 +80,10 @@ SALUD_PUBLICA = [
               'footprint', True, source='sivigila', period_col='periodo_menores5', dept_only=True),
     Indicator('irca', 'Índice de riesgo de la calidad del agua (IRCA)', 'irca_promedio',
               'puntos (0–100)', 1, 'water_drop', True, source='sivicap', period_col='irca_periodo'),
-    Indicator('dengue_grave', 'Incidencia de dengue grave', 'incidencia_dengue_grave_x100k',
-              'por 100.000 hab.', 2, 'pest_control', True, source='sivigila',
-              period_col='periodo_dengue', dept_only=True),
+    Indicator('dengue_grave', 'Incidencia de dengue grave', None, 'por 100.000 hab.', 2,
+              'pest_control', True, trend='',
+              pending='En revisión: el boletín PDF del INS no distingue bien el dengue grave. '
+                      'Se calculará con microdatos SIVIGILA.'),
     Indicator('suicidio', 'Tasa de incidencia de intento de suicidio', 'tasa_intento_suicidio',
               'por 100.000 hab.', 1, 'volunteer_activism', True, source='sivigila',
               period_col='periodo_suicidio'),

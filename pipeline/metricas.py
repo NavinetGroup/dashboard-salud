@@ -147,6 +147,11 @@ _SISBEN_MUN = ',\n           '.join(f'TRY_CAST({src} AS BIGINT) AS {col}' for co
 _SISBEN_SUM = ',\n           '.join(f'SUM(TRY_CAST({src} AS BIGINT)) AS {col}' for col, src in _SISBEN_SRC.items())
 _DISTRICT_CODES = ', '.join(str(c) for c in sorted(set(DISTRICTS.values())))
 
+# _DENGUE_GRAVE_NOTE: the INS PDF dengue table's columns shift between bulletins.
+# The column extracted as dengue_grave_total is another category (2025 PE IX:
+# 36,896 vs 989 severe cases in the SIVIGILA microdata), so severe dengue is not
+# published from the PDF. It returns with the SIVIGILA rebuild.
+
 # Dengue incidence is computed here (cases / DANE population · 100k) instead of read
 # from the INS PDF: the 2026 bulletins lost their decimal comma ('471,8' → '4718'),
 # so the extracted rate is off by an unknown power of ten. INS divides by population
@@ -446,7 +451,7 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         ctefile.append(('dengue', f"""
     SELECT geo_distrito_codigo,
            {_dd('dengue_total')}       AS dengue_total,
-           {_dd('dengue_grave_total')} AS dengue_grave_total,
+           NULL::DOUBLE AS dengue_grave_total,   -- see _DENGUE_GRAVE_NOTE
            {_PE_LABEL}                 AS periodo_dengue
     FROM ({ins('v_ins_dengue', _DISTRICT_ROW,
                    'geo_distrito_codigo', 'dengue_total DESC NULLS LAST')})"""))
@@ -791,7 +796,7 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
         ctefile.append(('dengue', f"""
     SELECT geo_dep_codigo,
            {_dd('dengue_total')}       AS dengue_total,
-           {_dd('dengue_grave_total')} AS dengue_grave_total,
+           NULL::DOUBLE AS dengue_grave_total,   -- see _DENGUE_GRAVE_NOTE
            {_PE_LABEL}                 AS periodo_dengue
     FROM ({ins('v_ins_dengue', _DEPT_ROW,
                    'geo_dep_codigo', 'dengue_total DESC NULLS LAST')})"""))
@@ -955,9 +960,7 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
     SELECT {_dd('dengue_total')} * 100000.0
                / (SELECT SUM(poblacion) FROM v_demografico_edad_sexo
                   WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) AS incidencia_dengue_x100k,
-           {_dd('dengue_grave_total')} * 100000.0
-               / (SELECT SUM(poblacion) FROM v_demografico_edad_sexo
-                  WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) AS incidencia_dengue_grave_x100k,
+           NULL::DOUBLE AS incidencia_dengue_grave_x100k,   -- see _DENGUE_GRAVE_NOTE
            {_PE_LABEL} AS periodo_dengue
     FROM ({ins('v_ins_dengue', _COUNTRY_ROW, 'dengue_total DESC NULLS LAST')})""",
                       ['incidencia_dengue_x100k', 'incidencia_dengue_grave_x100k', 'periodo_dengue']))
