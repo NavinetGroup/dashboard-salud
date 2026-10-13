@@ -21,35 +21,95 @@ import duckdb
 
 log = logging.getLogger(__name__)
 
-# Known normalized dept-name aliases → canonical normalized form
-# Applied after accent-stripping + uppercase so both sides match the same key.
-# Includes special district cities that report separately from their parent department.
-DEPT_ALIASES: dict[str, str] = {
-    # San Andrés variations
-    'NORTE SANTANDER': 'NORTE DE SANTANDER',
-    'SAN ANDRES Y PROVIDENCIA': 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA',
-    'SAN ANDRES': 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA',
-    'ARCH SAN ANDRES': 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA',
-    'ARC SAN ANDRES': 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA',
-    'ARCHIPIELAGO SAN ANDRES PROVIDENCIA Y SANTA CATALINA': 'SAN ANDRES PROVIDENCIA Y SANTA CATALINA',
-    # Bogotá
-    'BOGOTA D C': 'BOGOTA D C',
-    'BOGOTA': 'BOGOTA D C',
-    'D C': 'BOGOTA D C',
-    # Special districts — map to parent department
-    'BARRANQUILLA': 'ATLANTICO',
-    'CARTAGENA': 'BOLIVAR',
-    'CALI': 'VALLE DEL CAUCA',
-    'SANTA MARTA': 'MAGDALENA',
-    'SANTA MARTA D E': 'MAGDALENA',
-    'STA MARTA D E': 'MAGDALENA',
-    'BUENAVENTURA': 'VALLE DEL CAUCA',
-    # Abbreviated / alternate spellings
-    'GUAJIRA': 'LA GUAJIRA',
+# Department-name aliases → DIVIPOLA dept code.
+# Keys are normalized with _key() (uppercase, no accents, alphanumerics only).
+# Aliases point at codes rather than canonical names, so an alias can never
+# silently miss because DANE spells the target differently.
+# Applied to department names only — never to municipality names.
+DEPT_ALIASES: dict[str, int] = {
+    'NORTE SANTANDER': 54,
+    'NORTE DE SANTAN': 54,   # truncated in INS PDF tables
+    'VALLE': 76,
+    'GUAJIRA': 44,
+    'BOGOTA': 11,
+    'BOGOTA D C': 11,
+    'D C': 11,
+    'SAN ANDRES': 88,
+    'SAN ANDRES Y PROVIDENCIA': 88,
+    'SAN ANDRES PROVIDENCIA Y SANTA CATALINA': 88,
+    'ARCH SAN ANDRES': 88,
+    'ARC SAN ANDRES': 88,
+    'ARCHIPIELAGO SAN ANDRES PROVIDENCIA Y SANTA CATALINA': 88,
     # Departmental capitals used as dept name in some Supersalud reports
-    'IBAGUE': 'TOLIMA',
-    'POPAYAN': 'CAUCA',
+    'IBAGUE': 73,
+    'POPAYAN': 19,
 }
+
+# Special districts that INS / REPS / DIFT report as if they were departments.
+# Dept-level lookups resolve them to the parent department; views also expose
+# the district's own municipality code in geo_distrito_codigo so aggregations
+# can tell a district row apart from the department row.
+DISTRICTS: dict[str, int] = {
+    'BARRANQUILLA': 8001,
+    'CARTAGENA': 13001,
+    'CARTAGENA DE INDIAS': 13001,
+    'SANTA MARTA': 47001,
+    'SANTA MARTA D E': 47001,
+    'STA MARTA D E': 47001,
+    'CALI': 76001,
+    'SANTIAGO DE CALI': 76001,
+    'BUENAVENTURA': 76109,
+}
+
+# Municipality-name aliases, scoped by dept code → DIVIPOLA municipality code.
+# Only spellings verified against geo_maestro and the REPS habilitation-code
+# prefix belong here; never add fuzzy guesses (Antioquia has both San Pedro de
+# Los Milagros and San Pedro de Urabá).
+MUN_ALIASES: dict[tuple[int, str], int] = {
+    (11, 'BOGOTA'): 11001,
+    (13, 'CARTAGENA'): 13001,
+    (13, 'SANTA CRUZ DE MOMPOX'): 13468,
+    (54, 'CUCUTA'): 54001,
+    (52, 'TUMACO'): 52835,
+    (52, 'CUASPUD'): 52224,
+    (76, 'SANTIAGO DE CALI'): 76001,
+    (5, 'SAN PEDRO'): 5664,
+    (5, 'SAN ANDRES'): 5647,
+    (5, 'DON MATIAS'): 5237,
+    (5, 'SANTA FE DE ANTIOQUIA'): 5042,
+    (5, 'SAN VICENTE FERRER'): 5674,
+    (15, 'GUICAN'): 15332,
+    (19, 'PIENDAMO'): 19548,
+    (19, 'LOPEZ'): 19418,
+    (19, 'SOTARA'): 19760,
+    (20, 'MANAURE'): 20443,
+    (23, 'PURISIMA'): 23586,
+    (23, 'SAN ANDRES DE SOTAVENTO'): 23670,
+    (25, 'SAN JUAN DE RIO SECO'): 25662,
+    (27, 'BELEN DE BAJIRA'): 27493,
+    (47, 'CERRO SAN ANTONIO'): 47161,
+    (47, 'CHIVOLO'): 47170,
+    (70, 'SINCE'): 70742,
+    (70, 'SAN JOSE DE TOLUVIEJO'): 70823,
+    (73, 'SAN SEBASTIAN DE MARIQUITA'): 73443,
+    (86, 'LEGUIZAMO'): 86573,
+    (94, 'BARRANCO MINAS'): 94343,
+    (97, 'PAPUNAUA'): 97777,
+}
+
+# REPS tables: the first 5 digits of the 10-digit codigo_habilitacion are the
+# DIVIPOLA municipality code. Verified 2026-10-13: it agrees with name matching
+# on every row except the Buenaventura→Cali mis-match, and resolves Cartagena,
+# Cúcuta, Tumaco, etc. that names miss. Name matching is kept only as fallback.
+# (table, habilitacion_col, dept_col, mun_col)
+REPS_CODE_SOURCES: list[tuple[str, str, str, str]] = [
+    ('reps_prestadores',       'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+    ('reps_sedes',             'codigo_habilitacion', 'departamento', 'municipio'),
+    ('reps_servicios',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+    ('reps_capacidad',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+    ('reps_medidas_seguridad', 'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+    ('reps_sanciones',         'codigo_habilitacion', 'depa_nombre',  'muni_nombre'),
+]
 
 # (table, dept_col, mun_col, has_codes, dept_fallback_col)
 # has_codes=True: dept_col / mun_col already hold integer DIVIPOLA codes.
@@ -59,12 +119,7 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('demografico_etnico',     'codigo_dep',          'codigo_mun',  True,  None),
     ('irca',                   'codigo_dep',          'codigo_mun',  True,  None),
     ('afiliacion',             'departamento',        'municipio',   False, None),
-    ('reps_prestadores',       'depa_nombre',         'muni_nombre', False, None),
-    ('reps_sedes',             'departamento',        'municipio',   False, None),
-    ('reps_servicios',         'depa_nombre',         'muni_nombre', False, None),
-    ('reps_capacidad',         'depa_nombre',         'muni_nombre', False, None),
-    ('reps_medidas_seguridad', 'depa_nombre',         'muni_nombre', False, None),
-    ('reps_sanciones',         'depa_nombre',         'muni_nombre', False, None),
+    # reps_* are handled separately via REPS_CODE_SOURCES
     # ins_mortalidad_materna has dept-level rows (entidad_territorial) + mun rows (departamento/municipio)
     ('ins_mortalidad_materna', 'departamento',        'municipio',   False, 'entidad_territorial'),
     ('ins_sifilis_congenita',  'entidad_territorial', None,          False, None),
@@ -87,7 +142,12 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
 # Normalization key
 # ---------------------------------------------------------------------------
 
-def _normaliza(s) -> str:
+# Trailing tokens that mark non-municipalized areas: DANE writes "(ANM)",
+# INS writes "(CD)" (corregimiento departamental), afiliación writes neither.
+_AREA_SUFFIXES = (' ANM', ' CD')
+
+
+def _key(s) -> str:
     """Canonical matching key: uppercase, strip accents, collapse non-alphanum to space."""
     if not s:
         return ''
@@ -100,7 +160,38 @@ def _normaliza(s) -> str:
     tokens = s.split()
     if len(tokens) > 2 and all(len(t) == 1 for t in tokens):
         s = ''.join(tokens)
-    return DEPT_ALIASES.get(s, s)
+    for suffix in _AREA_SUFFIXES:
+        if s.endswith(suffix):
+            s = s[: -len(suffix)]
+    return s
+
+
+def _dep_code(raw, dep_lk: dict[str, int]) -> int | None:
+    k = _key(raw)
+    if k in dep_lk:
+        return dep_lk[k]
+    if k in DEPT_ALIASES:
+        return DEPT_ALIASES[k]
+    if k in DISTRICTS:
+        return DISTRICTS[k] // 1000
+    # PDF extraction sometimes splits words at random ("N o r t e d e S antander"),
+    # which the spaced-letter rule in _key() can't undo; compare without spaces.
+    nospace = k.replace(' ', '')
+    for name, code in (*dep_lk.items(), *DEPT_ALIASES.items()):
+        if name.replace(' ', '') == nospace:
+            return code
+    return None
+
+
+def _mun_code(dep_c: int | None, raw, mun_lk: dict[tuple[int, str], int]) -> int | None:
+    if dep_c is None:
+        return None
+    k = _key(raw)
+    return mun_lk.get((dep_c, k)) or MUN_ALIASES.get((dep_c, k))
+
+
+def _distrito_code(raw) -> int | None:
+    return DISTRICTS.get(_key(raw))
 
 
 # ---------------------------------------------------------------------------
@@ -136,9 +227,11 @@ def _build_lookups(con: duckdb.DuckDBPyConnection) -> tuple[dict, dict]:
     dep_lk: dict[str, int] = {}
     mun_lk: dict[tuple[int, str], int] = {}
     for dep_c, mun_c, dep_n, mun_n in rows:
-        nk = _normaliza(dep_n)
-        dep_lk.setdefault(nk, dep_c)
-        mun_lk.setdefault((dep_c, _normaliza(mun_n)), mun_c)
+        dep_lk.setdefault(_key(dep_n), dep_c)
+        k = (dep_c, _key(mun_n))
+        if k in mun_lk and mun_lk[k] != mun_c:
+            raise ValueError(f'geo_maestro: clave de municipio ambigua {k}')
+        mun_lk[k] = mun_c
     return dep_lk, mun_lk
 
 
@@ -159,13 +252,12 @@ def _build_map_mun(con, table, dept_col, mun_col, dep_lk, mun_lk,
     for raw_dep, raw_mun in pairs:
         if raw_dep is None:
             continue
-        nd = _normaliza(raw_dep)
-        nm = _normaliza(raw_mun)
-        dep_c = dep_lk.get(nd)
-        mun_c = mun_lk.get((dep_c, nm)) if dep_c else None
+        dep_c = _dep_code(raw_dep, dep_lk)
+        mun_c = _mun_code(dep_c, raw_mun, mun_lk)
         if mun_c:
             matched += 1
-        rows.append((str(raw_dep), str(raw_mun) if raw_mun is not None else None, dep_c, mun_c))
+        rows.append((str(raw_dep), str(raw_mun) if raw_mun is not None else None,
+                     dep_c, mun_c, _distrito_code(raw_dep)))
 
     map_name = f'geo_map_{table}'
     con.execute(f"DROP TABLE IF EXISTS {map_name}")
@@ -174,11 +266,12 @@ def _build_map_mun(con, table, dept_col, mun_col, dep_lk, mun_lk,
             raw_dep   VARCHAR,
             raw_mun   VARCHAR,
             dep_codigo INTEGER,
-            mun_codigo INTEGER
+            mun_codigo INTEGER,
+            distrito_codigo INTEGER
         )
     """)
     if rows:
-        con.executemany(f"INSERT INTO {map_name} VALUES (?, ?, ?, ?)", rows)
+        con.executemany(f"INSERT INTO {map_name} VALUES (?, ?, ?, ?, ?)", rows)
 
     pct = 100 * matched / len(rows) if rows else 0
     print(f'  geo_map_{table}: {matched}/{len(rows)} municipios ({pct:.0f}% match)')
@@ -195,17 +288,17 @@ def _build_map_dep(con, table, dept_col, dep_lk) -> None:
     for (raw_dep,) in pairs:
         if raw_dep is None:
             continue
-        nd = _normaliza(raw_dep)
-        dep_c = dep_lk.get(nd)
+        dep_c = _dep_code(raw_dep, dep_lk)
         if dep_c:
             matched += 1
-        rows.append((str(raw_dep), dep_c))
+        rows.append((str(raw_dep), dep_c, _distrito_code(raw_dep)))
 
     map_name = f'geo_map_{table}'
     con.execute(f"DROP TABLE IF EXISTS {map_name}")
-    con.execute(f"CREATE TABLE {map_name} (raw_dep VARCHAR, dep_codigo INTEGER)")
+    con.execute(f"CREATE TABLE {map_name} "
+                "(raw_dep VARCHAR, dep_codigo INTEGER, distrito_codigo INTEGER)")
     if rows:
-        con.executemany(f"INSERT INTO {map_name} VALUES (?, ?)", rows)
+        con.executemany(f"INSERT INTO {map_name} VALUES (?, ?, ?)", rows)
 
     pct = 100 * matched / len(rows) if rows else 0
     print(f'  geo_map_{table}: {matched}/{len(rows)} departamentos ({pct:.0f}% match)')
@@ -224,7 +317,8 @@ def _create_view_codes(con, table, dept_col, mun_col) -> None:
                    CAST({dept_col} AS INTEGER)     AS geo_dep_codigo,
                    TRY_CAST({mun_col} AS INTEGER)  AS geo_mun_codigo,
                    gm.dep_dane                     AS geo_dep_dane,
-                   gm.mun_dane                     AS geo_mun_dane
+                   gm.mun_dane                     AS geo_mun_dane,
+                   NULL::INTEGER                   AS geo_distrito_codigo
             FROM {table} t
             LEFT JOIN geo_maestro gm
                    ON CAST({dept_col} AS INTEGER)    = gm.dep_codigo
@@ -237,7 +331,8 @@ def _create_view_codes(con, table, dept_col, mun_col) -> None:
                    CAST({dept_col} AS INTEGER)  AS geo_dep_codigo,
                    NULL::INTEGER                AS geo_mun_codigo,
                    gd.dep_dane                  AS geo_dep_dane,
-                   NULL::VARCHAR                AS geo_mun_dane
+                   NULL::VARCHAR                AS geo_mun_dane,
+                   NULL::INTEGER                AS geo_distrito_codigo
             FROM {table} t
             LEFT JOIN geo_dep gd ON CAST({dept_col} AS INTEGER) = gd.dep_codigo
         """
@@ -251,10 +346,11 @@ def _create_view_names_mun(con, table, dept_col, mun_col,
     sql = f"""
         CREATE OR REPLACE VIEW v_{table} AS
         SELECT r.*,
-               mp.dep_codigo  AS geo_dep_codigo,
-               mp.mun_codigo  AS geo_mun_codigo,
-               gm.dep_dane    AS geo_dep_dane,
-               gm.mun_dane    AS geo_mun_dane
+               mp.dep_codigo      AS geo_dep_codigo,
+               mp.mun_codigo      AS geo_mun_codigo,
+               gm.dep_dane        AS geo_dep_dane,
+               gm.mun_dane        AS geo_mun_dane,
+               mp.distrito_codigo AS geo_distrito_codigo
         FROM {table} r
         LEFT JOIN geo_map_{table} mp
                ON {eff_dept}  IS NOT DISTINCT FROM mp.raw_dep
@@ -271,16 +367,50 @@ def _create_view_names_dep(con, table, dept_col) -> None:
     sql = f"""
         CREATE OR REPLACE VIEW v_{table} AS
         SELECT r.*,
-               mp.dep_codigo   AS geo_dep_codigo,
-               NULL::INTEGER   AS geo_mun_codigo,
-               gd.dep_dane     AS geo_dep_dane,
-               NULL::VARCHAR   AS geo_mun_dane
+               mp.dep_codigo      AS geo_dep_codigo,
+               NULL::INTEGER      AS geo_mun_codigo,
+               gd.dep_dane        AS geo_dep_dane,
+               NULL::VARCHAR      AS geo_mun_dane,
+               mp.distrito_codigo AS geo_distrito_codigo
         FROM {table} r
         LEFT JOIN geo_map_{table} mp
                ON r.{dept_col} IS NOT DISTINCT FROM mp.raw_dep
         LEFT JOIN geo_dep gd ON mp.dep_codigo = gd.dep_codigo
     """
     con.execute(sql)
+
+
+def _create_view_reps(con, table, hab_col, dept_col, mun_col) -> None:
+    """View for REPS tables: municipality from the habilitation-code prefix,
+    falling back to the name bridge only when the prefix is not a valid code."""
+    sql = f"""
+        CREATE OR REPLACE VIEW v_{table} AS
+        SELECT r.*,
+               COALESCE(gp.dep_codigo, mp.dep_codigo) AS geo_dep_codigo,
+               COALESCE(gp.mun_codigo, mp.mun_codigo) AS geo_mun_codigo,
+               COALESCE(gp.dep_dane,   gm.dep_dane)   AS geo_dep_dane,
+               COALESCE(gp.mun_dane,   gm.mun_dane)   AS geo_mun_dane,
+               NULL::INTEGER                          AS geo_distrito_codigo
+        FROM {table} r
+        LEFT JOIN geo_maestro gp
+               ON gp.mun_codigo = TRY_CAST(LEFT(LPAD(CAST(r.{hab_col} AS VARCHAR), 10, '0'), 5) AS INTEGER)
+        LEFT JOIN geo_map_{table} mp
+               ON r.{dept_col} IS NOT DISTINCT FROM mp.raw_dep
+              AND r.{mun_col}  IS NOT DISTINCT FROM mp.raw_mun
+        LEFT JOIN geo_maestro gm
+               ON mp.dep_codigo = gm.dep_codigo
+              AND mp.mun_codigo  = gm.mun_codigo
+    """
+    con.execute(sql)
+    total, by_code, mapped = con.execute(f"""
+        SELECT COUNT(*),
+               COUNT(*) FILTER (WHERE geo_mun_codigo =
+                   TRY_CAST(LEFT(LPAD(CAST({hab_col} AS VARCHAR), 10, '0'), 5) AS INTEGER)),
+               COUNT(geo_mun_codigo)
+        FROM v_{table}
+    """).fetchone()
+    print(f'  v_{table}: {mapped:,}/{total:,} filas con municipio '
+          f'({by_code:,} por código de habilitación)')
 
 
 # ---------------------------------------------------------------------------
@@ -318,6 +448,17 @@ def build_all(db_path: 'str | Path') -> None:
                 else:
                     _build_map_dep(con, table, dept_col, dep_lk)
                     _create_view_names_dep(con, table, dept_col)
+                n_views += 1
+            except Exception as e:
+                log.warning(f'geo_normalize: error en {table} — {e}')
+
+        for table, hab_col, dept_col, mun_col in REPS_CODE_SOURCES:
+            if table not in existing:
+                log.info(f'geo_normalize: {table} no existe, saltando.')
+                continue
+            try:
+                _build_map_mun(con, table, dept_col, mun_col, dep_lk, mun_lk)
+                _create_view_reps(con, table, hab_col, dept_col, mun_col)
                 n_views += 1
             except Exception as e:
                 log.warning(f'geo_normalize: error en {table} — {e}')
