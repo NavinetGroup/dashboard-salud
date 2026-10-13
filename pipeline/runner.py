@@ -12,7 +12,7 @@ Usage:
 
 Exit codes (one-shot modes):
   0  every step succeeded
-  1  some scrapers failed; transform rebuilt the DB with the sources that did refresh
+  1  some scrapers or data-quality checks failed; the DB was rebuilt (see the log)
   2  transform failed; the DB was not rebuilt
 """
 
@@ -35,7 +35,9 @@ import scrapers.afiliacion_scraper as afiliacion
 import scrapers.supersalud_scraper as supersalud
 import scrapers.ins_pdf_scraper as ins_pdf
 import pipeline.transform as transform
+import pipeline.quality as quality
 from scrapers.errors import ScrapeError
+from pipeline.quality import QualityError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -47,7 +49,7 @@ log = logging.getLogger(__name__)
 
 # Exit codes for the one-shot modes (scripts/run_monthly_pipeline.sh relies on them)
 EXIT_OK = 0
-EXIT_PARTIAL = 1        # some scrapers failed; transform rebuilt the DB with what it had
+EXIT_PARTIAL = 1        # some scrapers or quality checks failed; the DB was rebuilt
 EXIT_TRANSFORM = 2      # transform failed; the DB was not rebuilt
 
 
@@ -58,7 +60,7 @@ def _safe(fn, name: str) -> bool:
         fn(base_dir=str(BASE_DIR))
         log.info(f'<<< Completado: {name}')
         return True
-    except ScrapeError as e:
+    except (ScrapeError, QualityError) as e:
         log.error(f'!!! Falló {name}: {e}')
     except Exception:
         log.error(f'!!! Error en {name}:\n{traceback.format_exc()}')
@@ -96,6 +98,7 @@ def run_monthly() -> int:
         (supersalud.run, 'supersalud_scraper'),
         (ins_pdf.run, 'ins_pdf_scraper'),
         (transform.run, 'transform'),
+        (quality.run, 'calidad'),
     ])
 
 
@@ -103,6 +106,7 @@ def run_annual() -> int:
     return _run_steps('Ciclo anual (demografía)', [
         (demografico.run, 'demografico'),
         (transform.run, 'transform'),
+        (quality.run, 'calidad'),
     ])
 
 
@@ -115,6 +119,7 @@ def run_all() -> int:
         (supersalud.run, 'supersalud_scraper'),
         (ins_pdf.run, 'ins_pdf_scraper'),
         (transform.run, 'transform'),
+        (quality.run, 'calidad'),
     ])
 
 
@@ -137,7 +142,8 @@ def main() -> None:
     if args.annual:
         sys.exit(run_annual())
     if args.transform_only:
-        sys.exit(_run_steps('Solo transform', [(transform.run, 'transform')]))
+        sys.exit(_run_steps('Solo transform', [(transform.run, 'transform'),
+                                                (quality.run, 'calidad')]))
 
     # Scheduled mode
     scheduler = BlockingScheduler(timezone='America/Bogota')

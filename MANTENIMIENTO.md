@@ -91,6 +91,22 @@ Luego, **abre Hugging Face Space → Settings → "Factory rebuild"** para que e
 
 ## 🧪 Verificar antes de publicar
 
+Cada `transform` termina con el paso **calidad** (`pipeline/quality.py`), unos 45 controles automáticos:
+llaves duplicadas, % de filas con código de municipio por fuente, población étnica vs. total,
+meses de afiliación con totales idénticos (mes re-etiquetado), rangos plausibles de tasas,
+frescura de cada fuente y saltos de filas frente a la carga anterior.
+
+- **ERROR** → el paso `calidad` falla, el runner sale con código 1 y la notificación llega como
+  **CON FALLOS**. No publicar el DB hasta entenderlo.
+- **WARN** → aparece al final de la notificación (p. ej. fuente atrasada). Revisar, no bloquea.
+
+```powershell
+# Correr solo los controles sobre el DB actual
+.venv\Scripts\python.exe pipeline\quality.py
+```
+
+El histórico queda en las tablas `_calidad_resultados` y `_carga_log` del DB.
+
 ```powershell
 # Levanta el dashboard local
 .venv\Scripts\python.exe -m streamlit run dashboard\app.py

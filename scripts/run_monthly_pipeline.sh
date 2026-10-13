@@ -155,6 +155,18 @@ for t in tables:
         print(f'  {t:30s} {n:>10,} filas')
     except Exception as e:
         print(f'  {t:30s} ERROR: {e}')
+# Latest data-quality run: list what did not pass (warnings included)
+try:
+    rows = c.execute("""
+        SELECT nivel, control, detalle FROM _calidad_resultados
+        WHERE ejecutado_en = (SELECT MAX(ejecutado_en) FROM _calidad_resultados) AND NOT ok
+        ORDER BY nivel, control""").fetchall()
+    print('')
+    print('Calidad de datos:' if rows else 'Calidad de datos: todos los controles OK')
+    for nivel, control, detalle in rows:
+        print(f'  [{nivel.upper()}] {control}: {detalle}')
+except Exception as e:
+    print(f'Calidad de datos: no disponible ({e})')
 c.close()
 PY
 )
