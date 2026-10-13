@@ -85,9 +85,39 @@ def _month_cond(month: str | None) -> str:
     return f"UPPER(TRIM(mes)) = '{month}'"
 
 # INS entity rows: a department's own row (districts are separate entities)
-_DEPT_ROW = "geo_dep_codigo IS NOT NULL AND geo_mun_codigo IS NULL AND geo_distrito_codigo IS NULL"
+# entidad_territorial IS NOT NULL: municipal rows whose municipality did not
+# match (PDF residue) also have no geo_mun_codigo and must not pass for the
+# department's own row (Antioquia MM read 591.7 instead of 32.6 at 2026 PE IX).
+_DEPT_ROW = ("geo_dep_codigo IS NOT NULL AND geo_mun_codigo IS NULL AND geo_distrito_codigo IS NULL "
+             "AND entidad_territorial IS NOT NULL")
 _DISTRICT_ROW = "geo_distrito_codigo IS NOT NULL"
 _COUNTRY_ROW = "TRIM(entidad_territorial) ILIKE 'colombia'"
+
+# REPS installed capacity by type (grupo_capacidad / coca_nombre). Neonatal
+# intensive beds are not counted as paediatric ICU.
+_CAP_COLS = ('camas', 'consultorios', 'salas_cirugia', 'uci_adultos', 'uci_pediatricas')
+_CAP_TYPES = """SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CAMAS') AS camas,
+           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CONSULTORIOS') AS consultorios,
+           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+               WHERE TRIM(coca_nombre) IN ('Sala de Cirugía', 'Quirófano')) AS salas_cirugia,
+           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+               WHERE TRIM(coca_nombre) IN ('Intensiva Adultos', 'Cuidado Intensivo Adulto',
+                                           'Intensiva Quemado Adulto')) AS uci_adultos,
+           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+               WHERE TRIM(coca_nombre) IN ('Intensiva Pediátrica', 'Cuidado Intensivo Pediátrico',
+                                           'Intensiva Quemado pediátrica', 'Cuna Intensiva Pediátrica'))
+               AS uci_pediatricas"""
+
+# Afiliación: subsidised-regime affiliates without Sisbén IV classification (FCT Aseguramiento 8–11)
+_SISBEN_SRC = {
+    'afil_sin_sisben':             '"Afil. Subsidiado sin SISBEN IV"',
+    'afil_especiales_sin_sisben':  '"Afil. Pob. Especiales Subsidiado sin SISBEN IV"',
+    'afil_oficio_sin_sisben':      '"Afil. de Oficio sin SISBEN IV"',
+    'afil_no_pobre_no_vulnerable': '"Afil. Régimen Sub. No Pobre, No Vulnerable"',
+}
+_SISBEN_COLS = tuple(_SISBEN_SRC)
+_SISBEN_MUN = ',\n           '.join(f'TRY_CAST({src} AS BIGINT) AS {col}' for col, src in _SISBEN_SRC.items())
+_SISBEN_SUM = ',\n           '.join(f'SUM(TRY_CAST({src} AS BIGINT)) AS {col}' for col, src in _SISBEN_SRC.items())
 _DISTRICT_CODES = ', '.join(str(c) for c in sorted(set(DISTRICTS.values())))
 
 # Dengue incidence is computed here (cases / DANE population · 100k) instead of read
@@ -125,9 +155,18 @@ def _latest(view: str, where: str, key: str, entity: str, order: str) -> str:
     QUALIFY ROW_NUMBER() OVER (PARTITION BY {entity} ORDER BY {order}) = 1"""
 
 
-def _irca_latest_per_mun(year: int | None = None, month: str | None = None) -> str:
+def _pe_cap(view: str, caps: dict | None) -> str:
+    """Limit an INS view to periods ≤ the cap (used for the same period a year earlier)."""
+    n = (caps or {}).get('pe', {}).get(view)
+    return f"({_PE_CASE}) <= {int(n)}" if n else "TRUE"
+
+
+def _irca_latest_per_mun(year: int | None = None, month: str | None = None,
+                         caps: dict | None = None) -> str:
     """Each municipality's most recent IRCA within 12 months of the newest month in scope."""
-    scope = f"{_year_cond(year)} AND {_MES_KEY} <= {int(year) * 100 + _MESES.index(month) + 1}"         if year is not None and month is not None else _year_cond(year)
+    m = (caps or {}).get('irca_mes') or (_MESES.index(month) + 1 if month else None)
+    scope = f"{_year_cond(year)} AND {_MES_KEY} <= {int(year) * 100 + int(m)}" \
+        if year is not None and m else _year_cond(year)
     ceiling = f"(SELECT MAX({_MES_KEY}) FROM v_irca WHERE {scope})"
     return f"""
     SELECT * FROM v_irca
@@ -138,7 +177,9 @@ def _irca_latest_per_mun(year: int | None = None, month: str | None = None) -> s
         PARTITION BY geo_mun_codigo ORDER BY {_MES_KEY} DESC, n_muestras DESC NULLS LAST) = 1"""
 
 
-def _afil_latest(year: int | None = None, month: str | None = None) -> str:
+def _afil_latest(year: int | None = None, month: str | None = None,
+                 caps: dict | None = None) -> str:
+    month = (caps or {}).get('afil_mes') or month
     where = f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)} AND {_month_cond(month)}"
     return _latest('v_afiliacion', where, _MES_KEY,
                    'geo_mun_codigo', 'afiliados_total DESC NULLS LAST')
@@ -148,13 +189,15 @@ def _afil_latest(year: int | None = None, month: str | None = None) -> str:
 # Municipio view
 # ---------------------------------------------------------------------------
 
-def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None) -> str:
+def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None,
+                   caps: dict | None = None) -> str:
     """SELECT for one row per municipio. year/month narrow the time-varying sources
     (afiliación, IRCA, INS); None means the latest data available."""
     pob_year = _pob_year(year)
 
     def ins(view, where, entity, order):
-        return _latest(view, f"({where}) AND {_year_cond(year)}", _PE_KEY, entity, order)
+        return _latest(view, f"({where}) AND {_year_cond(year)} AND {_pe_cap(view, caps)}",
+                       _PE_KEY, entity, order)
 
     ctefile: list[tuple[str, str]] = []
     join_clauses: list[str] = []
@@ -201,13 +244,14 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         select_extra += [
             'etnico.pob_etnico_total', 'etnico.pob_indigena', 'etnico.pob_gitana_rrom',
             'etnico.pob_raizal', 'etnico.pob_palenquera', 'etnico.pob_negra_afro', 'etnico.pob_ninguno',
+            'etnico.pob_etnico_total - etnico.pob_ninguno AS pob_con_pertenencia',
         ]
     else:
         select_extra += [
             'NULL::BIGINT AS pob_etnico_total', 'NULL::BIGINT AS pob_indigena',
             'NULL::BIGINT AS pob_gitana_rrom', 'NULL::BIGINT AS pob_raizal',
             'NULL::BIGINT AS pob_palenquera', 'NULL::BIGINT AS pob_negra_afro',
-            'NULL::BIGINT AS pob_ninguno',
+            'NULL::BIGINT AS pob_ninguno', 'NULL::BIGINT AS pob_con_pertenencia',
         ]
 
     # ── IPS habilitadas ──────────────────────────────────────────────────────
@@ -232,16 +276,18 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
 
     # ── Capacidad instalada ──────────────────────────────────────────────────
     if ev.get('v_reps_capacidad'):
-        ctefile.append(('cap', """
+        ctefile.append(('cap', f"""
     SELECT geo_dep_codigo, geo_mun_codigo,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) AS capacidad_instalada
+           SUM(TRY_CAST(cantidad AS DOUBLE)) AS capacidad_instalada,
+           {_CAP_TYPES}
     FROM v_reps_capacidad
     WHERE geo_mun_codigo IS NOT NULL
     GROUP BY 1, 2"""))
         join_clauses.append("LEFT JOIN cap   ON gm.dep_codigo = cap.geo_dep_codigo AND gm.mun_codigo = cap.geo_mun_codigo")
-        select_extra.append('cap.capacidad_instalada')
+        select_extra += ['cap.capacidad_instalada', *(f'cap.{c}' for c in _CAP_COLS)]
     else:
-        select_extra.append('NULL::DOUBLE AS capacidad_instalada')
+        select_extra += ['NULL::DOUBLE AS capacidad_instalada',
+                         *(f'NULL::DOUBLE AS {c}' for c in _CAP_COLS)]
 
     # ── Afiliación (latest month published) ──────────────────────────────────
     if ev.get('v_afiliacion'):
@@ -249,17 +295,19 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
     SELECT geo_dep_codigo, geo_mun_codigo,
            afiliados_subsidiado, afiliados_contributivo, afiliados_total,
            TRY_CAST(Cobertura AS DOUBLE) * 100 AS cobertura_pct,
+           {_SISBEN_MUN},
            {_MES_LABEL} AS periodo_afiliacion
-    FROM ({_afil_latest(year, month)})"""))
+    FROM ({_afil_latest(year, month, caps)})"""))
         join_clauses.append("LEFT JOIN afil  ON gm.dep_codigo = afil.geo_dep_codigo AND gm.mun_codigo = afil.geo_mun_codigo")
         select_extra += [
             'afil.afiliados_subsidiado', 'afil.afiliados_contributivo', 'afil.afiliados_total',
-            'afil.cobertura_pct', 'afil.periodo_afiliacion',
+            'afil.cobertura_pct', *(f'afil.{c}' for c in _SISBEN_COLS), 'afil.periodo_afiliacion',
         ]
     else:
         select_extra += [
             'NULL::BIGINT AS afiliados_subsidiado', 'NULL::BIGINT AS afiliados_contributivo',
             'NULL::BIGINT AS afiliados_total', 'NULL::DOUBLE AS cobertura_pct',
+            *(f'NULL::BIGINT AS {c}' for c in _SISBEN_COLS),
             'NULL::VARCHAR AS periodo_afiliacion',
         ]
 
@@ -277,7 +325,7 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
            promedio_irca   AS irca_promedio,
            nivel_riesgo    AS irca_nivel_riesgo,
            {_MES_LABEL}    AS irca_periodo
-    FROM ({_irca_latest_per_mun(year, month)})"""))
+    FROM ({_irca_latest_per_mun(year, month, caps)})"""))
         join_clauses.append("LEFT JOIN irca  ON gm.dep_codigo = irca.geo_dep_codigo AND gm.mun_codigo = irca.geo_mun_codigo")
         select_extra += ['irca.irca_promedio', 'irca.irca_nivel_riesgo', 'irca.irca_periodo']
     else:
@@ -371,10 +419,14 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         inc = ('dengue.dengue_total * 100000.0 / NULLIF(dem.pob_total, 0)'
                if ev.get('v_demografico_edad_sexo') else 'NULL::DOUBLE')
         select_extra += ['dengue.dengue_total', 'dengue.dengue_grave_total',
-                         f'{inc} AS incidencia_dengue_x100k', 'dengue.periodo_dengue']
+                         f'{inc} AS incidencia_dengue_x100k',
+                         f"{inc.replace('dengue.dengue_total', 'dengue.dengue_grave_total')} "
+                         "AS incidencia_dengue_grave_x100k",
+                         'dengue.periodo_dengue']
     else:
         select_extra += ['NULL::DOUBLE AS dengue_total', 'NULL::DOUBLE AS dengue_grave_total',
-                         'NULL::DOUBLE AS incidencia_dengue_x100k', 'NULL::VARCHAR AS periodo_dengue']
+                         'NULL::DOUBLE AS incidencia_dengue_x100k',
+                         'NULL::DOUBLE AS incidencia_dengue_grave_x100k', 'NULL::VARCHAR AS periodo_dengue']
 
     if ev.get('v_ins_violencia_genero'):
         ctefile.append(('viol', f"""
@@ -425,12 +477,14 @@ FROM geo_maestro gm
 # Departamento view
 # ---------------------------------------------------------------------------
 
-def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None) -> str:
+def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None,
+                      caps: dict | None = None) -> str:
     """SELECT for one row per departamento (same scoping as _municipio_sql)."""
     pob_year = _pob_year(year)
 
     def ins(view, where, entity, order):
-        return _latest(view, f"({where}) AND {_year_cond(year)}", _PE_KEY, entity, order)
+        return _latest(view, f"({where}) AND {_year_cond(year)} AND {_pe_cap(view, caps)}",
+                       _PE_KEY, entity, order)
 
     ctefile: list[tuple[str, str]] = []
     join_clauses: list[str] = []
@@ -490,13 +544,14 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
         select_extra += [
             'etnico.pob_etnico_total', 'etnico.pob_indigena', 'etnico.pob_gitana_rrom',
             'etnico.pob_raizal', 'etnico.pob_palenquera', 'etnico.pob_negra_afro', 'etnico.pob_ninguno',
+            'etnico.pob_etnico_total - etnico.pob_ninguno AS pob_con_pertenencia',
         ]
     else:
         select_extra += [
             'NULL::BIGINT AS pob_etnico_total', 'NULL::BIGINT AS pob_indigena',
             'NULL::BIGINT AS pob_gitana_rrom', 'NULL::BIGINT AS pob_raizal',
             'NULL::BIGINT AS pob_palenquera', 'NULL::BIGINT AS pob_negra_afro',
-            'NULL::BIGINT AS pob_ninguno',
+            'NULL::BIGINT AS pob_ninguno', 'NULL::BIGINT AS pob_con_pertenencia',
         ]
 
     # ── IPS habilitadas (aggregate) ──────────────────────────────────────────
@@ -521,16 +576,18 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
 
     # ── Capacidad instalada (aggregate) ─────────────────────────────────────
     if ev.get('v_reps_capacidad'):
-        ctefile.append(('cap', """
+        ctefile.append(('cap', f"""
     SELECT geo_dep_codigo,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) AS capacidad_instalada
+           SUM(TRY_CAST(cantidad AS DOUBLE)) AS capacidad_instalada,
+           {_CAP_TYPES}
     FROM v_reps_capacidad
     WHERE geo_dep_codigo IS NOT NULL
     GROUP BY 1"""))
         join_clauses.append("LEFT JOIN cap   ON gd.dep_codigo = cap.geo_dep_codigo")
-        select_extra.append('cap.capacidad_instalada')
+        select_extra += ['cap.capacidad_instalada', *(f'cap.{c}' for c in _CAP_COLS)]
     else:
-        select_extra.append('NULL::DOUBLE AS capacidad_instalada')
+        select_extra += ['NULL::DOUBLE AS capacidad_instalada',
+                         *(f'NULL::DOUBLE AS {c}' for c in _CAP_COLS)]
 
     # ── IPS intervenidas (Supersalud, dept-level) ────────────────────────────
     if ev.get('v_supersalud_ips_intervenidas'):
@@ -569,18 +626,20 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
            SUM(afiliados_total)        AS afiliados_total,
            LEAST(100.0, 100.0 * SUM(afiliados_total)
                  / NULLIF(SUM(TRY_CAST("Población" AS DOUBLE)), 0)) AS cobertura_pct,
+           {_SISBEN_SUM},
            ANY_VALUE({_MES_LABEL})     AS periodo_afiliacion
-    FROM ({_afil_latest(year, month)})
+    FROM ({_afil_latest(year, month, caps)})
     GROUP BY 1"""))
         join_clauses.append("LEFT JOIN afil  ON gd.dep_codigo = afil.geo_dep_codigo")
         select_extra += [
             'afil.afiliados_subsidiado', 'afil.afiliados_contributivo', 'afil.afiliados_total',
-            'afil.cobertura_pct', 'afil.periodo_afiliacion',
+            'afil.cobertura_pct', *(f'afil.{c}' for c in _SISBEN_COLS), 'afil.periodo_afiliacion',
         ]
     else:
         select_extra += [
             'NULL::BIGINT AS afiliados_subsidiado', 'NULL::BIGINT AS afiliados_contributivo',
             'NULL::BIGINT AS afiliados_total', 'NULL::DOUBLE AS cobertura_pct',
+            *(f'NULL::BIGINT AS {c}' for c in _SISBEN_COLS),
             'NULL::VARCHAR AS periodo_afiliacion',
         ]
 
@@ -590,7 +649,7 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     SELECT geo_dep_codigo,
            SUM(promedio_irca * n_muestras) / NULLIF(SUM(n_muestras), 0) AS irca_promedio,
            MAX({_MES_LABEL})                                            AS irca_periodo
-    FROM ({_irca_latest_per_mun(year, month)})
+    FROM ({_irca_latest_per_mun(year, month, caps)})
     WHERE promedio_irca IS NOT NULL AND n_muestras > 0
     GROUP BY 1"""))
         join_clauses.append("LEFT JOIN irca  ON gd.dep_codigo = irca.geo_dep_codigo")
@@ -697,11 +756,15 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
         inc = ('dengue.dengue_total * 100000.0 / NULLIF(pob_sin_dist.pob, 0)'
                if ev.get('v_demografico_edad_sexo') else 'NULL::DOUBLE')
         select_extra += ['dengue.dengue_total', 'dengue.dengue_grave_total',
-                         f'{inc} AS incidencia_dengue_x100k', 'dengue.periodo_dengue']
+                         f'{inc} AS incidencia_dengue_x100k',
+                         f"{inc.replace('dengue.dengue_total', 'dengue.dengue_grave_total')} "
+                         "AS incidencia_dengue_grave_x100k",
+                         'dengue.periodo_dengue']
     else:
         select_extra += [
             'NULL::DOUBLE AS dengue_total', 'NULL::DOUBLE AS dengue_grave_total',
-            'NULL::DOUBLE AS incidencia_dengue_x100k', 'NULL::VARCHAR AS periodo_dengue',
+            'NULL::DOUBLE AS incidencia_dengue_x100k',
+            'NULL::DOUBLE AS incidencia_dengue_grave_x100k', 'NULL::VARCHAR AS periodo_dengue',
         ]
 
     # ── Intento suicidio (municipios listed, weighted by DANE population) ────
@@ -775,7 +838,8 @@ FROM geo_dep gd
 # National view (one row) — the reference the dashboard compares against
 # ---------------------------------------------------------------------------
 
-def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None) -> str:
+def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None,
+                  caps: dict | None = None) -> str:
     """One row of national rates, same column names as the department view.
 
     INS rates come from the bulletin's own 'Colombia' row; the rest are pooled
@@ -785,7 +849,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
     pob_year = _pob_year(year)
 
     def ins(view, where, order):
-        return _latest(view, f"({where}) AND {_year_cond(year)}", _PE_KEY, "'colombia'", order)
+        return _latest(view, f"({where}) AND {_year_cond(year)} AND {_pe_cap(view, caps)}",
+                       _PE_KEY, "'colombia'", order)
 
     parts: list[tuple[str, str, list[str]]] = []   # (cte name, body, columns)
 
@@ -798,12 +863,21 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
         parts.append(('afil', f"""
     SELECT LEAST(100.0, 100.0 * SUM(afiliados_total)
                  / NULLIF(SUM(TRY_CAST("Población" AS DOUBLE)), 0)) AS cobertura_pct,
+           SUM(afiliados_subsidiado) AS afiliados_subsidiado,
+           SUM(afiliados_contributivo) AS afiliados_contributivo,
+           {_SISBEN_SUM},
            ANY_VALUE({_MES_LABEL}) AS periodo_afiliacion
-    FROM ({_afil_latest(year, month)})""", ['cobertura_pct', 'periodo_afiliacion']))
+    FROM ({_afil_latest(year, month, caps)})""",
+                      ['cobertura_pct', 'afiliados_subsidiado', 'afiliados_contributivo',
+                       *_SISBEN_COLS, 'periodo_afiliacion']))
+    if ev.get('v_reps_capacidad'):
+        parts.append(('cap', f"""
+    SELECT {_CAP_TYPES}
+    FROM v_reps_capacidad WHERE geo_mun_codigo IS NOT NULL""", list(_CAP_COLS)))
     if ev.get('v_irca'):
         parts.append(('irca', f"""
     SELECT SUM(promedio_irca * n_muestras) / NULLIF(SUM(n_muestras), 0) AS irca_promedio
-    FROM ({_irca_latest_per_mun(year, month)})
+    FROM ({_irca_latest_per_mun(year, month, caps)})
     WHERE promedio_irca IS NOT NULL AND n_muestras > 0""", ['irca_promedio']))
     if ev.get('v_ins_mortalidad_materna'):
         parts.append(('mm', f"""
@@ -818,7 +892,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
            ANY_VALUE(periodo) AS periodo_desnutricion
     FROM (
         SELECT {_di('casos')} AS c, {_dd('prevalencia_por_100')} AS p, {_PE_LABEL} AS periodo
-        FROM ({_latest('v_ins_desnutricion_aguda', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)}",
+        FROM ({_latest('v_ins_desnutricion_aguda', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)} "
+                       f"AND {_pe_cap('v_ins_desnutricion_aguda', caps)}",
                        _PE_KEY, 'geo_mun_codigo', 'casos DESC NULLS LAST')})
     )""", ['prevalencia_desnutricion_aguda', 'periodo_desnutricion']))
     if ev.get('v_ins_mortalidad_menores5'):
@@ -835,14 +910,18 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
     SELECT {_dd('dengue_total')} * 100000.0
                / (SELECT SUM(poblacion) FROM v_demografico_edad_sexo
                   WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) AS incidencia_dengue_x100k,
+           {_dd('dengue_grave_total')} * 100000.0
+               / (SELECT SUM(poblacion) FROM v_demografico_edad_sexo
+                  WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) AS incidencia_dengue_grave_x100k,
            {_PE_LABEL} AS periodo_dengue
     FROM ({ins('v_ins_dengue', _COUNTRY_ROW, 'dengue_total DESC NULLS LAST')})""",
-                      ['incidencia_dengue_x100k', 'periodo_dengue']))
+                      ['incidencia_dengue_x100k', 'incidencia_dengue_grave_x100k', 'periodo_dengue']))
     if ev.get('v_ins_intento_suicidio') and ev.get('v_demografico_edad_sexo'):
         parts.append(('sui', f"""
     SELECT SUM({_dd('s.tasa')} * p.pob) / NULLIF(SUM(p.pob), 0) AS tasa_intento_suicidio,
            ANY_VALUE(CAST(s.anio AS VARCHAR) || ' PE ' || s.periodo_epidemiologico) AS periodo_suicidio
-    FROM ({_latest('v_ins_intento_suicidio', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)}",
+    FROM ({_latest('v_ins_intento_suicidio', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)} "
+                   f"AND {_pe_cap('v_ins_intento_suicidio', caps)}",
                    _PE_KEY, 'geo_mun_codigo', 'tasa DESC NULLS LAST')}) s
     JOIN (SELECT geo_mun_codigo, SUM(poblacion) AS pob FROM v_demografico_edad_sexo
           WHERE anio = {pob_year} GROUP BY 1) p ON p.geo_mun_codigo = s.geo_mun_codigo
@@ -902,18 +981,47 @@ def _build_period_tables(con: duckdb.DuckDBPyConnection, ev: dict[str, bool]) ->
     the pipeline is the single source of truth for every number shown.
     """
     grid = _period_grid(con)
+    years = {y for y, _ in grid}
+    # Same period one year earlier, for "tendencia vs. año anterior" (FCT): each
+    # source capped at the period the current selection actually shows, e.g.
+    # 2026 PE IX is compared with 2025 PE IX, not with the whole of 2025.
+    prev = [(y, m, _resolve_caps(con, ev, y, m)) for y, m in grid if y - 1 in years]
     for level, build in (('municipio', _municipio_sql), ('departamento', _departamento_sql),
                          ('nacional', _nacional_sql)):
-        table = f'metricas_{level}_periodo'
-        parts = [
-            f"SELECT {y} AS anio_filtro, "
-            f"{'NULL' if m is None else repr(m)}::VARCHAR AS mes_filtro, * "
-            f"FROM ({build(ev, y, m)})"
-            for y, m in grid
-        ]
-        con.execute(f"CREATE OR REPLACE TABLE {table} AS " + "\nUNION ALL BY NAME\n".join(parts))
-        n = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-        print(f'  {table}: {n:,} filas ({len(grid)} periodos)')
+        for table, rows in ((f'metricas_{level}_periodo', [(y, m, y, m, None) for y, m in grid]),
+                            (f'metricas_{level}_anterior', [(y, m, y - 1, None, c) for y, m, c in prev])):
+            if not rows:
+                con.execute(f"DROP TABLE IF EXISTS {table}")
+                continue
+            parts = [
+                f"SELECT {ky} AS anio_filtro, "
+                f"{'NULL' if km is None else repr(km)}::VARCHAR AS mes_filtro, * "
+                f"FROM ({build(ev, y, m, caps)})"
+                for ky, km, y, m, caps in rows
+            ]
+            con.execute(f"CREATE OR REPLACE TABLE {table} AS " + "\nUNION ALL BY NAME\n".join(parts))
+            n = con.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            print(f'  {table}: {n:,} filas ({len(rows)} periodos)')
+
+
+def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
+                  year: int, month: str | None) -> dict:
+    """The period each source shows for selection (year, month): the latest INS
+    epidemiological period in that year, the afiliación month, the IRCA month."""
+    caps: dict = {'pe': {}}
+    for view in [v for v in ev if v.startswith('v_ins_') and ev[v]]:
+        n = con.execute(f"SELECT MAX({_PE_CASE}) FROM {view} WHERE anio = ?", [year]).fetchone()[0]
+        if n:
+            caps['pe'][view] = int(n)
+    if ev.get('v_afiliacion'):
+        caps['afil_mes'] = month or con.execute(
+            f"SELECT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? "
+            f"ORDER BY {_MES_CASE} DESC LIMIT 1", [year]).fetchone()[0]
+    if ev.get('v_irca'):
+        caps['irca_mes'] = (_MESES.index(month) + 1 if month else
+                            con.execute(f"SELECT MAX({_MES_CASE}) FROM irca WHERE anio = ?",
+                                        [year]).fetchone()[0])
+    return caps
 
 
 # ---------------------------------------------------------------------------
