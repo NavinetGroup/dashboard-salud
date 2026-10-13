@@ -17,7 +17,6 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-import duckdb
 import openpyxl
 import polars as pl
 import requests
@@ -53,51 +52,91 @@ def _normalize_col(s: str) -> str:
     return re.sub(r'[^a-z0-9_]', '', s) or 'col'
 
 
-def _read_excel_openpyxl(data: bytes) -> pl.DataFrame | None:
-    """Read Excel using openpyxl, auto-detecting the header row."""
-    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
-    ws = wb.active
-    all_rows = list(ws.iter_rows(values_only=True))
-    wb.close()
+# Header label (normalized with _normalize_col, then prefix-matched) → canonical column.
+# Both the IPS (M4-FT-16) and EPS (CTFT21) exports share this layout, with small
+# label differences ("No." vs "NÚMERO", "Agente Interventor..." vs "REPRESENTANTE LEGAL").
+_COLUMN_MAP: list[tuple[str, str]] = [
+    ('no', 'numero'),
+    ('numero', 'numero'),
+    ('entidad', 'entidad'),
+    ('ciudad', 'ciudad'),
+    ('departamento', 'departamento'),
+    ('nit', 'nit'),
+    ('direccion', 'direccion'),
+    ('clase_de_medida', 'clase_medida'),
+    ('resolucion', 'resolucion'),
+    ('fecha_final', 'fecha_final_medida'),
+    ('acta_de_posesion', 'acta_posesion'),
+    ('vencimiento', 'vencimiento_acta'),
+]
+_REQUIRED = ('entidad', 'departamento')
 
-    # Find header row: first row with >= 3 non-null string values
-    header_idx = 0
+
+def _canonical(label: str) -> str | None:
+    key = _normalize_col(label)
+    for prefix, name in _COLUMN_MAP:
+        if key == prefix or (len(prefix) > 2 and key.startswith(prefix)):
+            return name
+    return None
+
+
+def _fecha_actualizacion(rows: list[tuple]) -> str | None:
+    """The metadata row above the header reads '... Fecha de actualización | 31 de mayo de 2026'."""
+    for row in rows:
+        cells = [str(v).strip() for v in row if v is not None and str(v).strip()]
+        for i, c in enumerate(cells[:-1]):
+            if _normalize_col(c).startswith('fecha_de_actualizacion'):
+                return cells[i + 1]
+    return None
+
+
+def _parse_rows(all_rows: list[tuple]) -> pl.DataFrame | None:
+    """Turn raw sheet rows into a tidy one-row-per-entity frame.
+
+    The sheet starts with an 'Área responsable / Fecha de actualización' metadata
+    row, then the real header, then data rows padded with blank numbered filler
+    rows and a 'Nota:' footer. Personal data columns (representative names, ID
+    numbers, e-mail, phone) are deliberately not kept.
+    """
+    header_idx = None
     for i, row in enumerate(all_rows):
-        non_null = [v for v in row if v is not None and isinstance(v, str) and len(str(v).strip()) > 1]
-        if len(non_null) >= 3:
+        found = {_canonical(str(v)) for v in row if v is not None}
+        if all(r in found for r in _REQUIRED):
             header_idx = i
             break
-
-    headers_raw = all_rows[header_idx]
-    headers = [_normalize_col(str(v)) if v is not None else f'col_{i}'
-               for i, v in enumerate(headers_raw)]
-
-    # Deduplicate
-    seen: dict[str, int] = {}
-    deduped = []
-    for h in headers:
-        if h in seen:
-            seen[h] += 1
-            deduped.append(f'{h}_{seen[h]}')
-        else:
-            seen[h] = 0
-            deduped.append(h)
-
-    data_rows = []
-    for row in all_rows[header_idx + 1:]:
-        if all(v is None for v in row):
-            continue
-        cells = [str(v).strip() if v is not None else '' for v in row]
-        padded = (cells + [''] * len(deduped))[:len(deduped)]
-        data_rows.append(padded)
-
-    if not data_rows:
+    if header_idx is None:
+        log.warning('supersalud: no se encontró la fila de encabezado (ENTIDAD/DEPARTAMENTO)')
         return None
 
-    data_dict = {col: [r[i] for r in data_rows] for i, col in enumerate(deduped)}
-    df = pl.DataFrame(data_dict)
-    df = df.filter(~pl.all_horizontal(pl.col(c) == '' for c in deduped[:1]))
-    return df if not df.is_empty() else None
+    col_idx: dict[str, int] = {}
+    for j, v in enumerate(all_rows[header_idx]):
+        name = _canonical(str(v)) if v is not None else None
+        if name and name not in col_idx:
+            col_idx[name] = j
+
+    records = []
+    for row in all_rows[header_idx + 1:]:
+        def cell(name):
+            j = col_idx.get(name)
+            v = row[j] if j is not None and j < len(row) else None
+            return re.sub(r'\s+', ' ', str(v)).strip() if v is not None else ''
+        if not cell('entidad'):
+            continue   # blank filler rows and the 'Nota:' footer
+        records.append({name: cell(name) for name in col_idx})
+
+    if not records:
+        return None
+    df = pl.DataFrame(records)
+    return df.with_columns(pl.lit(_fecha_actualizacion(all_rows[:header_idx])).alias('fecha_actualizacion'))
+
+
+def _read_excel_openpyxl(data: bytes) -> pl.DataFrame | None:
+    """Read the Supersalud Excel with openpyxl (fastexcel can't decompress the IPS file)."""
+    wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    try:
+        return _parse_rows(list(wb.active.iter_rows(values_only=True)))
+    finally:
+        wb.close()
 
 
 def _scrape_xlsx(url: str, label: str, retries: int = 3) -> pl.DataFrame | None:
@@ -133,28 +172,9 @@ def _scrape_xlsx(url: str, label: str, retries: int = 3) -> pl.DataFrame | None:
     return None
 
 
-def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
-    con = duckdb.connect(str(db_path))
-    for kind in ('ips_intervenidas', 'eps_intervenidas'):
-        files = sorted(parquet_dir.glob(f'supersalud_{kind}_*.parquet'))
-        if not files:
-            continue
-        glob = f'{parquet_dir.as_posix()}/supersalud_{kind}_*.parquet'
-        table = f'supersalud_{kind}'
-        con.execute(f'DROP TABLE IF EXISTS {table}')
-        # union_by_name handles header-name drift across months (Supersalud renamed
-        # the IPS file from CTFT21-* to M4-FT-16-* in 2026, changing 2 column labels).
-        con.execute(f"CREATE TABLE {table} AS "
-                    f"SELECT * FROM read_parquet('{glob}', union_by_name=True)")
-        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-        print(f'  DuckDB [{table}]: {n:,} filas')
-    con.close()
-
-
 def run(base_dir: str = None) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
 
     stamp = datetime.now().strftime('%Y_%m')
@@ -176,7 +196,6 @@ def run(base_dir: str = None) -> None:
         else:
             print(f'  -> {kind}: sin datos o error')
 
-    _register_duckdb(parquet_dir, db_path)
     print('supersalud_scraper OK')
 
 

@@ -6,7 +6,7 @@ Flujo:
 1. Selenium headless login con usuario invitado.
 2. Navegar al reporte municipal mensual y descargar CSV.
 3. Normalizar y guardar directamente en data/parquet/irca_YYYY_MM.parquet.
-4. Registrar tabla en data/informe_regional.duckdb.
+   (pipeline/transform.py registra la tabla irca en DuckDB, deduplicada.)
 """
 
 import logging
@@ -16,7 +16,6 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-import duckdb
 import polars as pl
 import undetected_chromedriver as uc
 from selenium.common.exceptions import TimeoutException, WebDriverException
@@ -344,33 +343,10 @@ def _parse_irca(path: Path) -> pl.DataFrame | None:
     return df.filter(pl.col('anio').is_not_null())
 
 
-def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
-    glob = f'{parquet_dir.as_posix()}/irca_*.parquet'
-    con = duckdb.connect(str(db_path))
-    con.execute('DROP TABLE IF EXISTS irca')
-    # Dedupe on natural key (anio, mes, codigo_mun). Monthly SIVICAP exports overlap
-    # historical periods, so loading every parquet would duplicate rows. ROW_NUMBER
-    # picks one row per key — all values for a given (anio, mes, mun) are identical
-    # across exports. union_by_name handles the schema gap between the older
-    # Decreto 1575/2007 format (has urbano/rural columns) and the newer
-    # Resolución 622/2020 format (consolidated columns only).
-    con.execute(f"""
-        CREATE TABLE irca AS
-        SELECT * EXCLUDE (_rn) FROM (
-            SELECT *, ROW_NUMBER() OVER (PARTITION BY anio, mes, codigo_mun ORDER BY anio) AS _rn
-            FROM read_parquet('{glob}', union_by_name=True)
-        ) WHERE _rn = 1
-    """)
-    n = con.execute('SELECT COUNT(*) FROM irca').fetchone()[0]
-    con.close()
-    print(f'  DuckDB [irca]: {n:,} filas (deduplicadas)')
-
-
 def run(base_dir: str = None) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
     raw_dir = base_dir / 'data' / 'raw'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
@@ -379,7 +355,6 @@ def run(base_dir: str = None) -> None:
 
     if parquet_path.exists():
         print(f'irca_scraper: parquet existente {parquet_path}')
-        _register_duckdb(parquet_dir, db_path)
         return
 
     # Check for manually dropped CSV files in data/raw/irca_manual/
@@ -394,7 +369,6 @@ def run(base_dir: str = None) -> None:
         if df is not None and not df.is_empty():
             df.write_parquet(parquet_path, compression='zstd')
             print(f'  -> {parquet_path} ({len(df):,} filas)')
-            _register_duckdb(parquet_dir, db_path)
             print('irca_scraper OK')
             return
         print('irca_scraper: archivo manual no parseable, intentando SIVICAP...')
@@ -417,7 +391,6 @@ def run(base_dir: str = None) -> None:
 
     df.write_parquet(parquet_path, compression='zstd')
     print(f'  -> {parquet_path} ({len(df):,} filas)')
-    _register_duckdb(parquet_dir, db_path)
     print('irca_scraper OK')
 
 

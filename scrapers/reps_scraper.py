@@ -21,7 +21,6 @@ import unicodedata
 from datetime import datetime
 from pathlib import Path
 
-import duckdb
 import polars as pl
 from selenium import webdriver
 from selenium.common.exceptions import TimeoutException
@@ -254,22 +253,6 @@ def _scrape_endpoint(driver: webdriver.Chrome, ep: dict, download_dir: str, stam
         return None
 
 
-def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
-    con = duckdb.connect(str(db_path))
-    for ep in ENDPOINTS:
-        name = ep['name']
-        files = sorted(parquet_dir.glob(f'reps_{name}_*.parquet'))
-        if not files:
-            continue
-        glob = f'{parquet_dir.as_posix()}/reps_{name}_*.parquet'
-        table = f'reps_{name}'
-        con.execute(f'DROP TABLE IF EXISTS {table}')
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{glob}')")
-        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-        print(f'  DuckDB [{table}]: {n:,} filas')
-    con.close()
-
-
 def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
     """
     Scrape REPS endpoints.
@@ -280,7 +263,6 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
     """
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
 
     import tempfile
@@ -300,7 +282,6 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
 
     if not eps_to_run:
         print('reps_scraper: todos los archivos ya existen. Omitiendo.')
-        _register_duckdb(parquet_dir, db_path)
         return
 
     driver = _make_driver(download_dir)
@@ -326,7 +307,6 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
         except Exception:
             pass
 
-    _register_duckdb(parquet_dir, db_path)
     print('reps_scraper OK')
 
 

@@ -12,6 +12,7 @@ Run: python pipeline/transform.py
 """
 
 import logging
+import re
 from pathlib import Path
 
 import duckdb
@@ -42,6 +43,33 @@ def _register_table(con: duckdb.DuckDBPyConnection, name: str, parquet_path: Pat
     con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_parquet('{parquet_path.as_posix()}')")
     count = con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
     log.info(f'Tabla DuckDB [{name}]: {count:,} filas')
+
+
+_SNAPSHOT_RE = re.compile(r'_(\d{4})_(\d{2})$')
+
+
+def _register_latest_snapshot(con: duckdb.DuckDBPyConnection, prefix: str) -> None:
+    """Load only the newest <prefix>_YYYY_MM.parquet into table <prefix>.
+
+    REPS and Supersalud files are full point-in-time registers, not monthly
+    increments: unioning them double-counts every provider/entity. The snapshot
+    stamp is kept in a `snapshot` column so the dashboard can show the cut-off.
+    """
+    snapshots = sorted(
+        (m.group(1) + '_' + m.group(2), p)
+        for p in PARQUET_DIR.glob(f'{prefix}_*.parquet')
+        if (m := _SNAPSHOT_RE.search(p.stem)) and p.stem == f'{prefix}_{m.group(1)}_{m.group(2)}'
+    )
+    if not snapshots:
+        log.warning(f'[{prefix}]: no hay parquet. Omitiendo.')
+        return
+    stamp, path = snapshots[-1]
+    con.execute(f'DROP TABLE IF EXISTS {prefix}')
+    con.execute(f"CREATE TABLE {prefix} AS "
+                f"SELECT *, '{stamp}' AS snapshot FROM read_parquet('{path.as_posix()}')")
+    n = con.execute(f'SELECT COUNT(*) FROM {prefix}').fetchone()[0]
+    log.info(f'Tabla DuckDB [{prefix}]: {n:,} filas (snapshot {stamp}; '
+             f'{len(snapshots) - 1} anteriores ignorados)')
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +182,20 @@ def transform_irca(con: duckdb.DuckDBPyConnection) -> None:
         return
     glob = f'{PARQUET_DIR.as_posix()}/irca*.parquet'
     con.execute('DROP TABLE IF EXISTS irca')
-    con.execute(f"CREATE TABLE irca AS SELECT * FROM read_parquet('{glob}')")
+    # Each monthly SIVICAP export repeats earlier months, so dedupe on the natural
+    # key (anio, mes, codigo_mun). The newest export wins: SIVICAP revises values,
+    # and newer files use the current Resolución 622/2020 format. union_by_name
+    # bridges the older Decreto 1575/2007 format (extra urbano/rural columns).
+    con.execute(f"""
+        CREATE TABLE irca AS
+        SELECT * EXCLUDE (_rn, filename) FROM (
+            SELECT *, ROW_NUMBER() OVER (
+                       PARTITION BY anio, mes, codigo_mun ORDER BY filename DESC) AS _rn
+            FROM read_parquet('{glob}', union_by_name=True, filename=True)
+        ) WHERE _rn = 1
+    """)
     n = con.execute('SELECT COUNT(*) FROM irca').fetchone()[0]
-    log.info(f'Tabla DuckDB [irca]: {n:,} filas')
+    log.info(f'Tabla DuckDB [irca]: {n:,} filas (deduplicadas)')
 
 
 # ---------------------------------------------------------------------------
@@ -185,16 +224,7 @@ REPS_ENDPOINTS = [
 
 def transform_reps(con: duckdb.DuckDBPyConnection) -> None:
     for ep in REPS_ENDPOINTS:
-        files = sorted(PARQUET_DIR.glob(f'reps_{ep}_*.parquet'))
-        if not files:
-            log.warning(f'REPS [{ep}]: no hay parquet. Omitiendo.')
-            continue
-        glob = f'{PARQUET_DIR.as_posix()}/reps_{ep}_*.parquet'
-        table = f'reps_{ep}'
-        con.execute(f'DROP TABLE IF EXISTS {table}')
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet('{glob}')")
-        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-        log.info(f'Tabla DuckDB [{table}]: {n:,} filas')
+        _register_latest_snapshot(con, f'reps_{ep}')
 
 
 # ---------------------------------------------------------------------------
@@ -203,19 +233,7 @@ def transform_reps(con: duckdb.DuckDBPyConnection) -> None:
 
 def transform_supersalud(con: duckdb.DuckDBPyConnection) -> None:
     for kind in ('ips_intervenidas', 'eps_intervenidas'):
-        files = sorted(PARQUET_DIR.glob(f'supersalud_{kind}_*.parquet'))
-        if not files:
-            log.warning(f'Supersalud [{kind}]: no hay parquet. Omitiendo.')
-            continue
-        glob = f'{PARQUET_DIR.as_posix()}/supersalud_{kind}_*.parquet'
-        table = f'supersalud_{kind}'
-        con.execute(f'DROP TABLE IF EXISTS {table}')
-        # union_by_name handles header drift between CTFT21-* (pre-2026) and
-        # M4-FT-16-* (2026+) Supersalud Excel exports.
-        con.execute(f"CREATE TABLE {table} AS "
-                    f"SELECT * FROM read_parquet('{glob}', union_by_name=True)")
-        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-        log.info(f'Tabla DuckDB [{table}]: {n:,} filas')
+        _register_latest_snapshot(con, f'supersalud_{kind}')
 
 
 # ---------------------------------------------------------------------------

@@ -25,7 +25,6 @@ from datetime import date
 from pathlib import Path
 from urllib.parse import quote
 
-import duckdb
 import polars as pl
 import requests
 
@@ -1079,29 +1078,6 @@ def scrape_event_period(event: dict, parquet_dir: Path,
 # DuckDB registration
 # ---------------------------------------------------------------------------
 
-def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
-    con = duckdb.connect(str(db_path))
-    for event in EVENTS:
-        key = event['key']
-        files = sorted(parquet_dir.glob(f'ins_{key}_*.parquet'))
-        if not files:
-            continue
-        glob = f'{parquet_dir.as_posix()}/ins_{key}_*.parquet'
-        table = f'ins_{key}'
-        con.execute(f'DROP TABLE IF EXISTS {table}')
-        con.execute(
-            f"CREATE TABLE {table} AS "
-            f"SELECT * FROM read_parquet('{glob}', union_by_name=True)"
-        )
-        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
-        print(f'  DuckDB [{table}]: {n:,} filas')
-    con.close()
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def run(base_dir: str = None, events: list[str] | None = None,
         start_year: int = START_YEAR) -> None:
     """
@@ -1112,7 +1088,6 @@ def run(base_dir: str = None, events: list[str] | None = None,
     """
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
 
     selected = [e for e in EVENTS if events is None or e['key'] in events]
@@ -1137,7 +1112,6 @@ def run(base_dir: str = None, events: list[str] | None = None,
         if new_for_event > 0:
             print(f'  [{key}]: {new_for_event} archivo(s) disponibles')
 
-    _register_duckdb(parquet_dir, db_path)
 
     if not all_written:
         print('ins_pdf_scraper: ADVERTENCIA — no se generaron archivos nuevos')

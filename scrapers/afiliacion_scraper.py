@@ -16,7 +16,6 @@ from datetime import datetime
 from io import BytesIO
 from pathlib import Path
 
-import duckdb
 import openpyxl
 import polars as pl
 import requests
@@ -199,20 +198,9 @@ def _normalize_df(df: pl.DataFrame, year: int, month: int) -> pl.DataFrame:
     return df
 
 
-def _register_duckdb(parquet_dir: Path, db_path: Path) -> None:
-    glob = f'{parquet_dir.as_posix()}/afiliacion_*.parquet'
-    con = duckdb.connect(str(db_path))
-    con.execute('DROP TABLE IF EXISTS afiliacion')
-    con.execute(f"CREATE TABLE afiliacion AS SELECT * FROM read_parquet('{glob}')")
-    n = con.execute('SELECT COUNT(*) FROM afiliacion').fetchone()[0]
-    con.close()
-    print(f'  DuckDB [afiliacion]: {n:,} filas')
-
-
 def run(base_dir: str = None, year: int = None, month: int = None) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     parquet_dir = base_dir / 'data' / 'parquet'
-    db_path = base_dir / 'data' / 'informe_regional.duckdb'
     parquet_dir.mkdir(parents=True, exist_ok=True)
 
     now = datetime.now()
@@ -227,7 +215,6 @@ def run(base_dir: str = None, year: int = None, month: int = None) -> None:
 
     if parquet_path.exists():
         print(f'afiliacion_scraper: parquet existente {parquet_path}')
-        _register_duckdb(parquet_dir, db_path)
         return
 
     # --- Migrate existing CSV if present ---
@@ -239,7 +226,6 @@ def run(base_dir: str = None, year: int = None, month: int = None) -> None:
         df = df.rename({c: c.strip() for c in df.columns})
         df.write_parquet(parquet_path, compression='zstd')
         print(f'  -> {parquet_path} ({len(df):,} filas)')
-        _register_duckdb(parquet_dir, db_path)
         print('afiliacion_scraper OK (desde CSV migrado)')
         return
 
@@ -265,7 +251,6 @@ def run(base_dir: str = None, year: int = None, month: int = None) -> None:
             parquet_path = parquet_dir / f'afiliacion_{stamp}.parquet'
             if parquet_path.exists():
                 print(f'afiliacion_scraper: parquet existente {parquet_path}')
-                _register_duckdb(parquet_dir, db_path)
                 return
     else:
         url = _build_url(year, month)
@@ -303,7 +288,6 @@ def run(base_dir: str = None, year: int = None, month: int = None) -> None:
     df.write_parquet(parquet_path, compression='zstd')
     print(f'  -> {parquet_path} ({len(df):,} filas)')
 
-    _register_duckdb(parquet_dir, db_path)
     print('afiliacion_scraper OK')
 
 

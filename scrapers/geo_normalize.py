@@ -128,10 +128,10 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('ins_mortalidad_menores5','entidad_territorial', None,          False, None),
     ('ins_dengue',             'entidad_territorial', None,          False, None),
     ('ins_violencia_genero',   'entidad_territorial', None,          False, None),
-    # supersalud: col_3 contains dept name; first data row has 'DEPARTAMENTO' (header artifact)
-    # → maps to NULL dep_codigo, filtered out via WHERE geo_dep_codigo IS NOT NULL in queries
-    ('supersalud_ips_intervenidas', 'col_3',       None,        False, None),
-    ('supersalud_eps_intervenidas', 'col_3',       None,        False, None),
+    # supersalud: some rows have ciudad/departamento swapped (e.g. 'TOLIMA' / 'IBAGUÉ');
+    # the capital-city entries in DEPT_ALIASES resolve those.
+    ('supersalud_ips_intervenidas', 'departamento', None,       False, None),
+    ('supersalud_eps_intervenidas', 'departamento', None,       False, None),
     # DIFT18: dept uses name column; mun already has integer DANE codes
     ('dift18_departamento',         'entidad_territorial', None, False, None),
     ('dift18_municipio',            'codigo_dep',  'codigo_mun', True,  None),
