@@ -1,0 +1,6 @@
+# Files executed or parsed on the Linux VM must keep LF line endings,
+# whatever core.autocrlf is on the machine they are edited on.
+*.sh       text eol=lf
+Caddyfile  text eol=lf
+Dockerfile text eol=lf
+*.yml      text eol=lf
