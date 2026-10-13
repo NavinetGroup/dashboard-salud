@@ -358,3 +358,42 @@ def bar_violence(row: pd.Series, nat: pd.Series | None = None, label: str = '',
                       plot_bgcolor='white', yaxis={'gridcolor': '#F0F0F0'},
                       legend={'orientation': 'h', 'y': -0.15})
     return fig
+
+
+# ── FCT design ────────────────────────────────────────────────────────────────
+
+def map_location(df_dept: pd.DataFrame, geojson: dict, dep_str: str,
+                 color: str = '#26A69A') -> go.Figure:
+    """Colombia with the selected department highlighted (Localización territorial)."""
+    d = df_dept[['departamento', 'dep_str']].copy()
+    d['sel'] = (d['dep_str'] == dep_str).astype(int)
+    fig = go.Figure(go.Choroplethmapbox(
+        geojson=geojson, locations=d['dep_str'], z=d['sel'], featureidkey='properties.DPTO',
+        colorscale=[[0, '#D7EDEA'], [1, color]], zmin=0, zmax=1, showscale=False,
+        marker_line_width=0.6, marker_line_color='white',
+        text=d['departamento'], hovertemplate='%{text}<extra></extra>'))
+    fig.update_layout(mapbox_style=_MAPBOX_STYLE, mapbox_zoom=_MAP_ZOOM, mapbox_center=_MAP_CENTER,
+                      margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=420)
+    return fig
+
+
+def ring_pct(value: float | None, color: str = '#1E88E5', label: str = '') -> go.Figure:
+    """Coverage ring: share filled, value in the centre (FCT Aseguramiento)."""
+    v = max(0.0, min(100.0, _n(value)))
+    fig = go.Figure(go.Pie(values=[v, 100 - v], hole=0.78, sort=False, direction='clockwise',
+                           marker={'colors': [color, '#E3E8EC']}, textinfo='none',
+                           hoverinfo='skip'))
+    txt = 'N/D' if _is_null(value) else f'{v:,.1f}%'.replace('.', ',')
+    fig.update_layout(showlegend=False, height=230, margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
+                      annotations=[{'text': f'<b>{txt}</b><br><span style="font-size:11px">{label}</span>',
+                                    'showarrow': False, 'font': {'size': 26, 'color': color}}])
+    return fig
+
+
+def sparkline(x: list, y: list, color: str = '#26A69A') -> go.Figure:
+    fig = go.Figure(go.Scatter(x=x, y=y, mode='lines+markers', line={'color': color, 'width': 2},
+                               marker={'size': 4}, fill='tozeroy',
+                               fillcolor='rgba(38,166,154,0.10)', hovertemplate='%{x}: %{y:,.0f}<extra></extra>'))
+    fig.update_layout(height=70, margin={'t': 0, 'b': 0, 'l': 0, 'r': 0}, showlegend=False,
+                      xaxis={'visible': False}, yaxis={'visible': False}, plot_bgcolor='white')
+    return fig

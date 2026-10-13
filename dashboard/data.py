@@ -263,6 +263,52 @@ def get_dept_metrics(year: int | None = None, month: str | None = None) -> pd.Da
 
 
 @st.cache_data(ttl=3600)
+def get_prev_metrics(level: str, year: int | None, month: str | None,
+                     code: int | None = None) -> pd.Series:
+    """The same metrics for the same period one year earlier (metricas_*_anterior),
+    for the trend arrows. level: 'municipio' | 'departamento' | 'nacional'."""
+    if year is None:
+        return pd.Series(dtype=object)
+    con = _connect()
+    try:
+        table = f'metricas_{level}_anterior'
+        if not _has_table(con, table):
+            return pd.Series(dtype=object)
+        key = {'municipio': 'geo_mun_codigo', 'departamento': 'geo_dep_codigo'}.get(level)
+        where, params = 'anio_filtro = ? AND mes_filtro IS NOT DISTINCT FROM ?', [int(year), month]
+        if key and code is not None:
+            where += f' AND {key} = ?'
+            params.append(int(code))
+        df = con.execute(f"SELECT * EXCLUDE (anio_filtro, mes_filtro) FROM {table} WHERE {where}",
+                         params).df()
+        return df.iloc[0] if len(df) == 1 else pd.Series(dtype=object)
+    finally:
+        con.close()
+
+
+@st.cache_data(ttl=3600)
+def get_monthly_series(level: str, cols: tuple[str, ...], code: int | None = None) -> pd.DataFrame:
+    """Monthly values (one row per afiliación month) for sparklines."""
+    con = _connect()
+    try:
+        table = f'metricas_{level}_periodo'
+        if not _has_table(con, table):
+            return pd.DataFrame()
+        key = {'municipio': 'geo_mun_codigo', 'departamento': 'geo_dep_codigo'}.get(level)
+        where, params = 'mes_filtro IS NOT NULL', []
+        if key and code is not None:
+            where += f' AND {key} = ?'
+            params.append(int(code))
+        df = con.execute(
+            f"SELECT anio_filtro AS anio, mes_filtro AS mes, {', '.join(cols)} FROM {table} WHERE {where}",
+            params).df()
+    finally:
+        con.close()
+    df['orden'] = df['anio'] * 100 + df['mes'].map(_MES_ORDER)
+    return df.sort_values('orden').reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600)
 def get_nat_metrics(year: int | None = None, month: str | None = None) -> pd.Series:
     """National reference row (true national rates). Empty on a DB built before it existed."""
     con = _connect()

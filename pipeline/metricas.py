@@ -94,18 +94,19 @@ _DISTRICT_ROW = "geo_distrito_codigo IS NOT NULL"
 _COUNTRY_ROW = "TRIM(entidad_territorial) ILIKE 'colombia'"
 
 # REPS installed capacity by type (grupo_capacidad / coca_nombre). Neonatal
-# intensive beds are not counted as paediatric ICU.
+# intensive beds are not counted as paediatric ICU. 0 (not NULL) when the
+# territory reports capacity but none of that type (e.g. no ICU in Amazonas).
 _CAP_COLS = ('camas', 'consultorios', 'salas_cirugia', 'uci_adultos', 'uci_pediatricas')
-_CAP_TYPES = """SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CAMAS') AS camas,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CONSULTORIOS') AS consultorios,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
-               WHERE TRIM(coca_nombre) IN ('Sala de Cirugía', 'Quirófano')) AS salas_cirugia,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+_CAP_TYPES = """COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CAMAS'), 0) AS camas,
+           COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (WHERE grupo_capacidad = 'CONSULTORIOS'), 0) AS consultorios,
+           COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+               WHERE TRIM(coca_nombre) IN ('Sala de Cirugía', 'Quirófano')), 0) AS salas_cirugia,
+           COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
                WHERE TRIM(coca_nombre) IN ('Intensiva Adultos', 'Cuidado Intensivo Adulto',
-                                           'Intensiva Quemado Adulto')) AS uci_adultos,
-           SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
+                                           'Intensiva Quemado Adulto')), 0) AS uci_adultos,
+           COALESCE(SUM(TRY_CAST(cantidad AS DOUBLE)) FILTER (
                WHERE TRIM(coca_nombre) IN ('Intensiva Pediátrica', 'Cuidado Intensivo Pediátrico',
-                                           'Intensiva Quemado pediátrica', 'Cuna Intensiva Pediátrica'))
+                                           'Intensiva Quemado pediátrica', 'Cuna Intensiva Pediátrica')), 0)
                AS uci_pediatricas"""
 
 # Afiliación: subsidised-regime affiliates without Sisbén IV classification (FCT Aseguramiento 8–11)
@@ -597,7 +598,8 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     WHERE geo_dep_codigo IS NOT NULL
     GROUP BY 1"""))
         join_clauses.append("LEFT JOIN ips_interv ON gd.dep_codigo = ips_interv.geo_dep_codigo")
-        select_extra.append('ips_interv.ips_intervenidas')
+        # No row means no intervened entity in the department: 0, not missing
+        select_extra.append('COALESCE(ips_interv.ips_intervenidas, 0) AS ips_intervenidas')
     else:
         select_extra.append('NULL::BIGINT AS ips_intervenidas')
 
@@ -609,7 +611,7 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     WHERE geo_dep_codigo IS NOT NULL
     GROUP BY 1"""))
         join_clauses.append("LEFT JOIN eps_interv ON gd.dep_codigo = eps_interv.geo_dep_codigo")
-        select_extra.append('eps_interv.eps_intervenidas')
+        select_extra.append('COALESCE(eps_interv.eps_intervenidas, 0) AS eps_intervenidas')
     else:
         select_extra.append('NULL::BIGINT AS eps_intervenidas')
 
