@@ -28,6 +28,11 @@ from urllib.parse import quote
 import polars as pl
 import requests
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 HEADERS = {
@@ -1095,28 +1100,24 @@ def run(base_dir: str = None, events: list[str] | None = None,
 
     print(f'ins_pdf_scraper: {len(periods)} periodos desde PE I {start_year} hasta PE actual')
 
-    all_written = []
+    all_written, empty_events = [], []
     for event in selected:
         key = event['key']
         new_for_event = 0
         for pe, year in periods:
             written = scrape_event_period(event, parquet_dir, pe, year)
-            if written:
-                # Only count truly new files (not from cache)
-                new_files = [p for p in written
-                             if not any(p == x for x in sorted(parquet_dir.glob(
-                                 f'ins_{key}_PE_{ROMAN[pe-1]}_{year}*.parquet'
-                             )) if x not in written)]
+            if written:   # includes periods already cached on disk
                 all_written.extend(written)
-                new_for_event += len([p for p in written])
+                new_for_event += len(written)
         if new_for_event > 0:
             print(f'  [{key}]: {new_for_event} archivo(s) disponibles')
+        else:
+            empty_events.append(key)
 
-
-    if not all_written:
-        print('ins_pdf_scraper: ADVERTENCIA — no se generaron archivos nuevos')
-    else:
-        print(f'ins_pdf_scraper OK')
+    if empty_events:
+        raise ScrapeError(f'ins_pdf: sin ningún archivo para {", ".join(empty_events)} '
+                          f'(¿INS caído o cambió la URL de los informes?)')
+    print('ins_pdf_scraper OK')
 
 
 if __name__ == '__main__':

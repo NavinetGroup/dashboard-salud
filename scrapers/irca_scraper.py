@@ -23,6 +23,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait, Select
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 SIVICAP_LOGIN = 'https://sivicap.ins.gov.co/SIVICAP/Account/Login'
@@ -403,19 +408,19 @@ def run(base_dir: str = None) -> None:
         downloaded = _scrape_sivicap(tmpdir)
 
         if downloaded is None:
-            print('irca_scraper: ADVERTENCIA — no se pudo obtener datos de SIVICAP.')
-            print('  Coloque el CSV descargado manualmente en data/raw/irca_manual/ y re-ejecute.')
-            return
+            raise ScrapeError(
+                'irca: SIVICAP no entregó datos (probable reCAPTCHA). Descargue el CSV '
+                'manualmente en data/raw/irca_manual/ y re-ejecute (ver MANTENIMIENTO.md).')
 
         print(f'irca_scraper: procesando {downloaded.name}')
         df = _parse_irca(downloaded)
 
     if df is None or df.is_empty():
-        print('irca_scraper: ADVERTENCIA — no se pudo parsear el archivo descargado.')
-        return
+        raise ScrapeError(f'irca: no se pudo parsear el archivo de SIVICAP {downloaded.name}')
 
-    if _write_stamped(df, parquet_dir):
-        print('irca_scraper OK')
+    if _write_stamped(df, parquet_dir) is None:
+        raise ScrapeError('irca: no se pudo determinar el periodo del archivo de SIVICAP')
+    print('irca_scraper OK')
 
 
 if __name__ == '__main__':

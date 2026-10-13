@@ -440,6 +440,7 @@ def build_all(db_path: 'str | Path') -> None:
         dep_lk, mun_lk = _build_lookups(con)
 
         n_views = 0
+        errors: list[str] = []
         for table, dept_col, mun_col, has_codes, dept_fallback in GEO_SOURCES:
             if table not in existing:
                 log.info(f'geo_normalize: {table} no existe, saltando.')
@@ -455,7 +456,8 @@ def build_all(db_path: 'str | Path') -> None:
                     _create_view_names_dep(con, table, dept_col)
                 n_views += 1
             except Exception as e:
-                log.warning(f'geo_normalize: error en {table} — {e}')
+                log.error(f'geo_normalize: error en {table} — {e}')
+                errors.append(f'{table}: {e}')
 
         for table, code_expr, dept_col, mun_col in CODE_FIRST_SOURCES:
             if table not in existing:
@@ -466,8 +468,12 @@ def build_all(db_path: 'str | Path') -> None:
                 _create_view_code_first(con, table, code_expr, dept_col, mun_col)
                 n_views += 1
             except Exception as e:
-                log.warning(f'geo_normalize: error en {table} — {e}')
+                log.error(f'geo_normalize: error en {table} — {e}')
+                errors.append(f'{table}: {e}')
 
+        if errors:
+            # Keep building the other views, but don't let a broken one pass silently.
+            raise RuntimeError(f'geo_normalize: {len(errors)} vista(s) fallaron — ' + '; '.join(errors))
         print(f'geo_normalize OK — {n_views} vistas creadas')
     finally:
         con.close()

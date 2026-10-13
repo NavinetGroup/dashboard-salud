@@ -29,6 +29,11 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 URL_LOGIN = 'https://prestadores.minsalud.gov.co/habilitacion/'
@@ -284,6 +289,7 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
         print('reps_scraper: todos los archivos ya existen. Omitiendo.')
         return
 
+    failed = []
     driver = _make_driver(download_dir)
     try:
         _login(driver)
@@ -296,6 +302,7 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
                 print(f'  -> {out} ({len(df):,} filas)')
             else:
                 print(f'  -> REPS [{ep["name"]}]: sin datos o error')
+                failed.append(ep['name'])
     finally:
         try:
             driver.quit()
@@ -307,6 +314,8 @@ def run(base_dir: str = None, endpoints: list[str] | None = None) -> None:
         except Exception:
             pass
 
+    if failed:
+        raise ScrapeError(f'reps: endpoints sin datos: {", ".join(failed)}')
     print('reps_scraper OK')
 
 

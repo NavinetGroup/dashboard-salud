@@ -49,9 +49,14 @@ El scraper de SIVICAP es rechazado por anti-bot. Dos opciones:
 2. Login: `invitado@ins.gov.co` / `123456` + resuelve el reCAPTCHA.
 3. Menú: **Reportes → SIVICAP → IRCA mensual por municipio**.
 4. Selecciona año/mes y haz clic en **Exportar CSV**.
-5. Copia el archivo descargado a `data/raw/irca_manual/` (reemplaza el anterior).
-6. Borra `data/parquet/irca_YYYY_MM.parquet` del mes actual.
-7. Corre `python pipeline/runner.py --transform-only`.
+5. Copia el archivo descargado a `data/raw/irca_manual/`.
+6. Corre `python scrapers/irca_scraper.py` y luego `python pipeline/runner.py --transform-only`.
+   El scraper guarda el parquet con el último mes que contienen los datos y mueve el CSV a
+   `data/raw/irca_manual/procesados/`, para que no se vuelva a cargar el mes siguiente.
+
+Mientras no haya un CSV nuevo, el pipeline mensual intenta SIVICAP y, si el reCAPTCHA lo
+bloquea, la notificación llega como **CON FALLOS** indicando `irca_scraper`: es la señal
+para hacer esta descarga manual.
 
 #### Opción B — Sesión persistente (más esfuerzo inicial, automático por semanas)
 

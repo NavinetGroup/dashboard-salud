@@ -21,6 +21,11 @@ import openpyxl
 import polars as pl
 import requests
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 HEADERS = {
@@ -184,6 +189,7 @@ def run(base_dir: str = None) -> None:
         'eps_intervenidas': URL_EPS_XLSX,
     }
 
+    failed = []
     for kind, url in urls.items():
         out = parquet_dir / f'supersalud_{kind}_{stamp}.parquet'
         if out.exists():
@@ -195,6 +201,10 @@ def run(base_dir: str = None) -> None:
             print(f'  -> {out} ({len(df):,} filas)')
         else:
             print(f'  -> {kind}: sin datos o error')
+            failed.append(kind)
+
+    if failed:
+        raise ScrapeError(f'supersalud: no se pudo obtener {", ".join(failed)}')
 
     print('supersalud_scraper OK')
 

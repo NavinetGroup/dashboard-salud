@@ -18,6 +18,11 @@ import openpyxl
 import polars as pl
 import requests
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 URL_AGE = 'https://www.dane.gov.co/files/censo2018/proyecciones-de-poblacion/Municipal/PPED-AreaSexoEdadMun-2018-2042_VP.xlsx'
@@ -138,9 +143,8 @@ def run(base_dir: str = None) -> None:
     try:
         rows_age = _read_sheet(_download(URL_AGE), SHEET_AGE)
     except Exception as e:
-        print(f'  ERROR edad/sexo: {e}')
         con.close()
-        return
+        raise ScrapeError(f'demografico: descarga edad/sexo falló — {e}') from e
 
     hr, hr2 = _detect_header(rows_age)
     cols = _col_names(rows_age, hr, hr2)
@@ -161,9 +165,8 @@ def run(base_dir: str = None) -> None:
                 age_sex_cols.append((i, m.group(1).upper(), int(m.group(2))))
 
     if not age_sex_cols:
-        print('  ERROR: no se detectaron columnas de edades.')
         con.close()
-        return
+        raise ScrapeError('demografico: no se detectaron columnas de edades (¿cambió el formato DANE?)')
 
     # Row-by-row melt — avoids Polars unpivot on 11M rows
     records_age = []
@@ -228,9 +231,8 @@ def run(base_dir: str = None) -> None:
     try:
         rows_eth = _read_sheet(_download(URL_ETH), SHEET_ETH)
     except Exception as e:
-        print(f'  ERROR étnico-racial: {e}')
         con.close()
-        return
+        raise ScrapeError(f'demografico: descarga étnico-racial falló — {e}') from e
 
     hr_e, hr2_e = _detect_header(rows_eth, key_any=('COD_DPTO', 'DEPARTAMENTO', 'DP'))
     cols_e = _col_names(rows_eth, hr_e, hr2_e)
@@ -263,9 +265,8 @@ def run(base_dir: str = None) -> None:
             eth_cols_idx.append((i, c))
 
     if not eth_cols_idx:
-        print('  ERROR: no se detectaron columnas étnicas.')
         con.close()
-        return
+        raise ScrapeError('demografico: no se detectaron columnas étnicas (¿cambió el formato DANE?)')
 
     records_eth = []
     for row in rows_eth[start_e:]:

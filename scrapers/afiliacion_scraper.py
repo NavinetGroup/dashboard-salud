@@ -20,6 +20,11 @@ import openpyxl
 import polars as pl
 import requests
 
+try:
+    from scrapers.errors import ScrapeError
+except ImportError:  # run directly as `python scrapers/<name>.py`
+    from errors import ScrapeError
+
 log = logging.getLogger(__name__)
 
 # Known historical URLs that don't match the standard pattern
@@ -290,7 +295,7 @@ def run(base_dir: str = None, year: int = None, month: int = None, lookback: int
         print('afiliacion_scraper: todos los meses ya están en parquet.')
         return
 
-    written, unpublished = [], []
+    written, unpublished, failed = [], [], []
     for y, m in missing:
         if parquet_for(y, m).exists():   # written earlier in this run under its true period
             continue
@@ -307,12 +312,14 @@ def run(base_dir: str = None, year: int = None, month: int = None, lookback: int
             zip_data, source = _download_zip(url), url
             if zip_data is None:
                 log.warning(f'afiliacion: descarga fallida {url}')
+                failed.append(f'{y}-{m:02d} (descarga)')
                 continue
 
         inner = _zip_inner_name(zip_data)
         period = _period_from_name(inner or '') or _period_from_name(source)
         if period is None:
             log.warning(f'afiliacion: no se pudo leer el periodo de {source} ({inner}); omitido')
+            failed.append(f'{y}-{m:02d} (periodo ilegible)')
             continue
         if period != (y, m):
             log.warning(f'afiliacion: {source} contiene {period[0]}-{period[1]:02d}, '
@@ -324,6 +331,7 @@ def run(base_dir: str = None, year: int = None, month: int = None, lookback: int
         df = _extract_df_from_zip(zip_data)
         if df is None:
             log.warning(f'afiliacion: no se pudo leer el Excel de {source}')
+            failed.append(f'{y}-{m:02d} (Excel ilegible)')
             continue
         df = _normalize_df(df, *period)
         df.write_parquet(out, compression='zstd')
@@ -332,6 +340,8 @@ def run(base_dir: str = None, year: int = None, month: int = None, lookback: int
 
     if unpublished:
         print(f'afiliacion_scraper: aún no publicados: {", ".join(unpublished)}')
+    if failed:
+        raise ScrapeError(f'afiliacion: fallaron {", ".join(failed)}')
     print(f'afiliacion_scraper OK — {len(written)} meses nuevos')
 
 
