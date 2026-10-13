@@ -25,17 +25,22 @@ Antes de empezar IT debe haber entregado:
 # Desde tu máquina local
 ssh navinet-admin@informe-regional.supersalud.gov.co
 
-# Una vez dentro, ejecutar el instalador (descarga repo, instala Docker, Chrome, cron)
-sudo bash <(curl -fsSL https://raw.githubusercontent.com/NavinetGroup/dashboard-salud/main/scripts/install_vm.sh)
+# Una vez dentro: clonar una versión fija del repo, revisar el instalador y ejecutarlo.
+# (No usar `curl ... | bash` contra main: se ejecutaría lo que haya en ese momento.)
+git clone --branch <TAG_DE_RELEASE> https://github.com/NavinetGroup/dashboard-salud.git /tmp/informe-regional
+less /tmp/informe-regional/scripts/install_vm.sh
+sudo bash /tmp/informe-regional/scripts/install_vm.sh
 ```
 
 El script `install_vm.sh` hace todo automáticamente en ~5 min:
 
-- Verifica que el OS sea Ubuntu/Debian
+- Verifica que el OS sea **Ubuntu 24.04 LTS o superior** (python3.12 no existe en 22.04)
 - Instala paquetes base (`python3.12-venv`, `git`, `cron`, `mailutils`)
-- Instala Docker engine + lo habilita en boot
+- Instala Docker desde el repositorio apt oficial firmado + lo habilita en boot
 - Instala Google Chrome (para los scrapers Selenium)
-- Crea el usuario `navinet-ops` y lo agrega al grupo `docker`
+- Crea el usuario `navinet-ops` (dueño del repo, corre el pipeline). **No** lo agrega al
+  grupo `docker` (equivale a root y ese usuario ejecuta Chrome contra sitios externos):
+  recibe una única regla sudo hacia `/usr/local/sbin/informe-restart-dashboard`
 - Clona el repo en `/opt/informe-regional`
 - Crea el venv Python con `requirements_full.txt`
 - Configura los cron jobs:
@@ -65,14 +70,18 @@ TLS_KEY_PATH=/etc/ssl/private/informe-regional.key
 # Si no te entregan cert y solo es prueba interna:
 TLS_MODE=internal      # Caddy auto-firma (los usuarios verán warning del navegador)
 
-# Notificaciones — elige UNO:
+# Notificaciones — elige UNO (recomendado: webhook):
 NOTIFY_WEBHOOK_URL=https://supersalud.webhook.office.com/webhookb2/...   # Teams
 # o
 NOTIFY_EMAIL_TO=ops@navinetgroup.com
-SMTP_HOST=smtp.supersalud.gov.co
-SMTP_USER=...
-SMTP_PASS=...
 ```
+
+El email se envía con el comando `mail` de la VM, que necesita un MTA configurado como
+relay hacia el SMTP de Supersalud (p. ej. `sudo apt install msmtp-mta` y `/etc/msmtprc`
+con host, puerto y credenciales que entregue IT). Sin eso, use el webhook.
+
+Cada notificación indica el resultado (**OK / CON FALLOS / FAILED**) y lista los controles
+de calidad que no pasaron.
 
 ### 2.1 Copiar el certificado TLS (si TLS_MODE=file)
 
@@ -85,11 +94,23 @@ sudo chmod 600 /etc/ssl/private/informe-regional.key
 
 ---
 
-## 3. Levantar los contenedores
+## 3. Primera carga de datos y contenedores
+
+El dashboard lee `data/informe_regional.duckdb` del host (montado **solo lectura** en el
+contenedor). Ese archivo lo genera el pipeline: transform construye un DB nuevo, corre
+los controles de calidad sobre él y solo si pasan lo publica con un rename atómico.
 
 ```bash
 cd /opt/informe-regional
-sudo -u navinet-ops docker compose -f docker-compose.prod.yml up -d --build
+# 1. Primera carga (~25 min)
+sudo -u navinet-ops .venv/bin/python pipeline/runner.py --run-now
+ls -la data/informe_regional.duckdb
+
+# 2. Validar la configuración de Caddy (TLS_MODE de .env)
+sudo docker compose -f docker-compose.prod.yml run --rm caddy caddy validate --config /etc/caddy/Caddyfile
+
+# 3. Levantar
+sudo docker compose -f docker-compose.prod.yml up -d --build
 ```
 
 Esto:
@@ -100,7 +121,7 @@ Esto:
 Verifica:
 
 ```bash
-sudo -u navinet-ops docker compose -f docker-compose.prod.yml ps
+sudo docker compose -f docker-compose.prod.yml ps
 # Ambos deben estar "Up (healthy)" en 2 minutos
 ```
 
@@ -129,10 +150,10 @@ Debe cargar el dashboard. Primera carga tarda ~10 s porque baja el DB de 129 MB 
 
 ```bash
 # Logs en vivo del dashboard
-sudo -u navinet-ops docker logs -f informe-dashboard
+sudo docker logs -f informe-dashboard
 
 # Logs en vivo de Caddy
-sudo -u navinet-ops docker logs -f informe-caddy
+sudo docker logs -f informe-caddy
 ```
 
 ---
@@ -183,7 +204,7 @@ Cuando Navinet publica una nueva versión del código:
 ```bash
 cd /opt/informe-regional
 sudo -u navinet-ops git pull
-sudo -u navinet-ops docker compose -f docker-compose.prod.yml up -d --build dashboard
+sudo docker compose -f docker-compose.prod.yml up -d --build dashboard
 ```
 
 El siguiente `git pull` lo hace el cron automáticamente, así que en realidad no hay que correr nada — los cambios entran en producción en la próxima ejecución mensual.
@@ -198,13 +219,13 @@ Si en algún momento hay que migrar a otra VM:
 
 ```bash
 # En la VM origen — backup el DB
-sudo -u navinet-ops docker compose -f docker-compose.prod.yml down
+sudo docker compose -f docker-compose.prod.yml down
 sudo cp /var/lib/docker/volumes/informe-regional_informe_data/_data/informe_regional.duckdb /tmp/
 
 # En la VM destino — instalar (paso 1 de esta guía)
 # Luego copiar el DB en lugar de re-descargarlo:
 sudo cp /tmp/informe_regional.duckdb /var/lib/docker/volumes/informe-regional_informe_data/_data/
-sudo -u navinet-ops docker compose -f docker-compose.prod.yml up -d
+sudo docker compose -f docker-compose.prod.yml up -d
 ```
 
 ---

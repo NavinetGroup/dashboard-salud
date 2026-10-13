@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Cached DuckDB queries and GeoJSON loader for the dashboard."""
 
+import hashlib
 import json
 import os
 import urllib.request
@@ -14,16 +15,48 @@ import streamlit as st
 # outside the app folder so it survives code upgrades.
 DB = Path(os.environ.get('INFORME_DB_PATH',
           str(Path(__file__).parent.parent / 'data' / 'informe_regional.duckdb')))
-DB_URL = 'https://github.com/NavinetGroup/dashboard-salud/releases/download/data-v1/informe_regional.duckdb'
+DB_URL = os.environ.get(
+    'DB_RELEASE_URL',
+    'https://github.com/NavinetGroup/dashboard-salud/releases/download/data-v1/informe_regional.duckdb')
+# Optional: the SHA-256 published with the release; when set, a download that
+# doesn't match is rejected instead of being served.
+DB_SHA256 = os.environ.get('DB_SHA256', '').strip().lower()
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
+
+
+def _download_db() -> None:
+    """Fetch the release DB atomically: write to .part, verify, then rename.
+
+    A plain urlretrieve to the final path left a truncated file after an
+    interrupted download, which DB.exists() then accepted on every restart.
+    """
+    part = DB.with_name(DB.name + '.part')
+    digest = hashlib.sha256()
+    try:
+        with urllib.request.urlopen(DB_URL, timeout=60) as resp, open(part, 'wb') as out:
+            while chunk := resp.read(1 << 20):
+                digest.update(chunk)
+                out.write(chunk)
+        if DB_SHA256 and digest.hexdigest() != DB_SHA256:
+            raise RuntimeError(f'SHA-256 no coincide ({digest.hexdigest()[:12]}… ≠ {DB_SHA256[:12]}…)')
+        duckdb.connect(str(part), read_only=True).close()   # must be a readable DuckDB file
+        os.replace(part, DB)
+    finally:
+        part.unlink(missing_ok=True)
 
 
 @st.cache_resource(show_spinner=False)
 def _ensure_db() -> str:
     if not DB.exists():
+        if not os.access(DB.parent if DB.parent.exists() else DB.parent.parent, os.W_OK):
+            # Production mounts the pipeline's data/ read-only: the DB must come from
+            # the pipeline, never from a download inside the container.
+            st.error(f'No existe la base de datos {DB}. Ejecute el pipeline '
+                     '(pipeline/runner.py) para generarla y recargue.')
+            st.stop()
         DB.parent.mkdir(parents=True, exist_ok=True)
-        with st.spinner('Descargando base de datos (~208 MB, solo primera carga)...'):
-            urllib.request.urlretrieve(DB_URL, DB)
+        with st.spinner('Descargando base de datos (solo primera carga)...'):
+            _download_db()
     return str(DB)
 
 

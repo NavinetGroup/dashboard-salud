@@ -2,9 +2,13 @@
 #  Informe Regional de Salud — Instalador
 # ============================================================
 #  Ejecutar en PowerShell con:
-#    powershell -ExecutionPolicy Bypass -File install.ps1
-#  O descargar, hacer clic derecho -> "Ejecutar con PowerShell"
+#    Unblock-File .\install.ps1
+#    powershell -ExecutionPolicy RemoteSigned -File install.ps1 [-Ref v1.2.0]
+#  -Ref: tag o rama a instalar (por defecto main). Para equipos de usuarios
+#  finales, instalar un tag de release, no lo que haya en main ese dia.
 # ============================================================
+
+param([string]$Ref = 'main')
 
 $ErrorActionPreference = 'Stop'
 
@@ -17,7 +21,7 @@ $LauncherBat = "$InstallDir\Iniciar_Dashboard.bat"
 $UpdatePs1   = "$InstallDir\update_data.ps1"
 $LogFile     = "$InstallDir\install_log.txt"
 
-$RepoZipUrl = "https://github.com/NavinetGroup/dashboard-salud/archive/refs/heads/main.zip"
+$RepoZipUrl = "https://github.com/NavinetGroup/dashboard-salud/archive/$Ref.zip"
 $DataApiUrl = "https://api.github.com/repos/NavinetGroup/dashboard-salud/releases/latest"
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -132,6 +136,10 @@ if (Test-Path $DataFile) {
         Write-Info "Descargando: $($asset.name)"
         $tmp = $DataFile + ".tmp"
         Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmp -UseBasicParsing
+        if ((Get-Item $tmp).Length -ne $asset.size) {
+            Remove-Item $tmp -Force
+            Fail "Descarga incompleta de la base de datos (tamano distinto al publicado)."
+        }
         Move-Item $tmp $DataFile -Force
 
         $mb = "{0:N0}" -f ((Get-Item $DataFile).Length / 1MB)
@@ -144,12 +152,15 @@ if (Test-Path $DataFile) {
 Write-Step "5/6" "Configurando actualizacion mensual automatica..."
 
 Copy-Item "$AppDir\deploy\update_data.ps1" $UpdatePs1 -Force
+# The script came from a downloaded ZIP (Mark of the Web); unblock it so it runs
+# under RemoteSigned instead of requiring -ExecutionPolicy Bypass.
+Unblock-File $UpdatePs1
 
 $taskName = "InformeRegional_UpdateData"
 Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
 
 $action   = New-ScheduledTaskAction -Execute "powershell.exe" `
-            -Argument "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$UpdatePs1`""
+            -Argument "-ExecutionPolicy RemoteSigned -WindowStyle Hidden -File `"$UpdatePs1`""
 $trigger  = New-ScheduledTaskTrigger -Monthly -DaysOfMonth 1 -At "06:00"
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -RunOnlyIfNetworkAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 2)
 Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Settings $settings -Force | Out-Null

@@ -98,8 +98,9 @@ run_logged .venv/bin/pip install -q -r requirements_full.txt || fail "pip instal
 
 # ---------------------------------------------------------------------
 # 3. Run scrapers + transform
-#    runner.py exit codes: 0 OK · 1 some scrapers failed (DB rebuilt with the
-#    rest) · 2 transform failed (DB not rebuilt)
+#    runner.py exit codes: 0 OK · 1 some scrapers failed (a new DB was still
+#    built, checked and published) · 2 transform/quality/publish failed (the
+#    live DB was NOT replaced; the dashboard keeps the previous data)
 # ---------------------------------------------------------------------
 echo "→ Ejecutando pipeline $MODE..." | tee -a "$LOG_FILE"
 if [ "$MODE" = "--annual" ]; then
@@ -113,7 +114,7 @@ PIPELINE_RC=$?
 FAILED_STEPS=$(grep -E 'FALLO|Falló|Error en' "$LOG_FILE" | sed 's/^[0-9-]* [0-9:]* //' | tail -n 20)
 
 if [ "$PIPELINE_RC" -ge 2 ]; then
-    fail "pipeline (exit $PIPELINE_RC)" "La base de datos NO se reconstruyó.
+    fail "pipeline (exit $PIPELINE_RC)" "NO se publicó un DB nuevo: el dashboard sigue con los datos anteriores.
 
 $FAILED_STEPS"
 fi
@@ -122,19 +123,12 @@ fi
 # 4. Restart dashboard so it picks up the fresh DB
 # ---------------------------------------------------------------------
 echo "→ Reiniciando dashboard..." | tee -a "$LOG_FILE"
-run_logged docker compose -f docker-compose.prod.yml restart dashboard || fail "docker compose restart"
-
-echo "→ Esperando healthcheck..." | tee -a "$LOG_FILE"
-HEALTH="unknown"
-for _ in {1..60}; do
-    HEALTH=$(docker inspect --format='{{.State.Health.Status}}' informe-dashboard 2>/dev/null || echo "unknown")
-    if [ "$HEALTH" = "healthy" ]; then
-        echo "  ✓ Dashboard saludable" | tee -a "$LOG_FILE"
-        break
-    fi
-    sleep 5
-done
-[ "$HEALTH" = "healthy" ] || fail "healthcheck del dashboard" "Estado tras 5 min: $HEALTH"
+# The pipeline user is not in the docker group (scripts/install_vm.sh): it gets
+# one sudo rule for this root-owned helper, which restarts the container and
+# waits up to 5 min for it to report healthy.
+RESTART_CMD="${RESTART_CMD:-sudo -n /usr/local/sbin/informe-restart-dashboard}"
+run_logged $RESTART_CMD || fail "reinicio / healthcheck del dashboard"
+echo "  ✓ Dashboard saludable" | tee -a "$LOG_FILE"
 
 # ---------------------------------------------------------------------
 # 5. Summarize and notify
@@ -145,7 +139,7 @@ DURATION=$(( $(date +%s) - START_EPOCH ))
 # Pull DB row counts for the summary
 SUMMARY=$("$PYTHON" <<'PY'
 import duckdb, os
-db = os.environ.get('INFORME_DB_PATH', 'data/informe_regional.duckdb')
+db = 'data/informe_regional.duckdb'   # host path published by runner.py (mounted into the container)
 c = duckdb.connect(db, read_only=True)
 tables = ['reps_prestadores', 'irca', 'afiliacion', 'supersalud_ips_intervenidas',
           'ins_mortalidad_materna', 'ins_dengue', 'demografico_edad_sexo']

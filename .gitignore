@@ -6,8 +6,7 @@ __pycache__/
 .Python
 
 # Virtual environments
-.venv/
-.venv_py314_backup/
+.venv*/
 informeregional/
 venv/
 env/
@@ -29,5 +28,7 @@ Thumbs.db
 # Logs
 *.log
 
-# Environment / secrets — never commit the populated .env
+# Environment / secrets — never commit the populated .env (or variants)
 .env
+.env.*
+!.env.example

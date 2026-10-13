@@ -2,9 +2,10 @@
 .gitignore
 .venv*
 informeregional
-__pycache__
-*.pyc
-*.pyo
+**/__pycache__
+**/*.py[co]
+# Secrets must never reach the build context (it is sent to the Docker daemon)
+.env*
 data
 logs
 deploy
@@ -23,7 +24,7 @@ Archive
 .idea
 .DS_Store
 Thumbs.db
-WEBSCRAPING_GUIDE.md
-INDICADORES_FUENTES.md
-DAT-LB-WEBSCRAPINGWI-*.md
+docs
+scripts
+*.md
 requirements_full.txt

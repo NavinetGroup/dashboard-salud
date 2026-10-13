@@ -1,9 +1,15 @@
+# Local / development use only. Production uses docker-compose.prod.yml (Caddy + HTTPS).
+# A separate project name keeps `docker compose up` here from replacing the
+# production containers if it is ever run on the VM.
+name: informe-regional-dev
+
 services:
   dashboard:
     build: .
-    image: informe-regional:latest
+    image: informe-regional:dev
     ports:
-      - "8501:8501"
+      # Loopback only: Docker port publishing bypasses host firewalls (UFW)
+      - "127.0.0.1:8501:8501"
     volumes:
       - informe_data:/data
     restart: unless-stopped

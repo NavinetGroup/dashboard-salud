@@ -1,4 +1,5 @@
-FROM python:3.12-slim
+# Pin the patch release so rebuilds are reproducible; bump deliberately.
+FROM python:3.12.10-slim
 
 # Non-root user for the running app
 RUN groupadd -r app && useradd -r -g app -d /app -s /bin/bash app

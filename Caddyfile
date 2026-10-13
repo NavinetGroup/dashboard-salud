@@ -1,21 +1,39 @@
 # Caddy config — Informe Regional de Salud
 #
-# TLS se controla cambiando UNA línea de abajo según el modo elegido en .env:
-#   • TLS_MODE=internal  →  deja `tls internal` (Caddy auto-firma)
-#   • TLS_MODE=file      →  cambia a `tls /certs/cert.pem /certs/key.pem`
-#   • TLS_MODE=acme      →  cambia a `tls tuemail@dominio.com` (Let's Encrypt)
+# TLS is chosen by TLS_MODE in .env (passed to the container by docker-compose.prod.yml);
+# no editing of this file is needed:
+#   TLS_MODE=internal  → certificate signed by Caddy's own CA (testing only; browsers warn)
+#   TLS_MODE=file      → certificate + key provided by IT, mounted as /certs/cert.pem and
+#                        /certs/key.pem from TLS_CERT_PATH / TLS_KEY_PATH
+#   TLS_MODE=acme      → Let's Encrypt (needs public DNS and ports 80/443 reachable);
+#                        set ACME_EMAIL
+#
+# HSTS is sent only with a real certificate (file / acme). With `tls internal`
+# it would pin browsers to a certificate they can never accept, for a year.
+
+(tls_internal) {
+	tls internal
+}
+
+(tls_file) {
+	tls /certs/cert.pem /certs/key.pem
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+
+(tls_acme) {
+	tls {$ACME_EMAIL}
+	header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
 
 {$HOSTNAME} {
+	import tls_{$TLS_MODE:internal}
+
 	reverse_proxy dashboard:8501 {
 		header_up Host {host}
 		header_up X-Real-IP {remote}
 	}
 
-	# ⬇️ EDITAR según TLS_MODE en .env
-	tls internal
-
 	header {
-		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		X-Content-Type-Options "nosniff"
 		X-Frame-Options "SAMEORIGIN"
 		Referrer-Policy "strict-origin-when-cross-origin"

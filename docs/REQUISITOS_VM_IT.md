@@ -49,7 +49,7 @@ Solo 2 personas del equipo Navinet requieren acceso SSH a la VM. El dashboard se
 | Opción | Recomendación |
 |---|---|
 | **Ubuntu Server 24.04 LTS** | ✅ Preferido (LTS hasta 2029, mejor soporte Docker) |
-| Ubuntu Server 22.04 LTS | OK |
+| Ubuntu Server 22.04 LTS | ❌ No soportado (no trae python3.12) |
 | Debian 12 | OK |
 | RHEL 9 / Rocky Linux 9 | OK |
 | Windows Server | ❌ No recomendado (Docker funciona pero hay fricción) |
@@ -144,7 +144,7 @@ Solo 2 cuentas necesitan acceso SSH:
 | Cuenta | Rol | Acceso |
 |---|---|---|
 | `navinet-admin` | Despliegue + mantenimiento Navinet | `sudo` (sin password, con clave SSH) |
-| `navinet-ops` | Monitoreo + actualizaciones mensuales | Login + sudo selectivo (`docker`, `git`, `systemctl restart`) |
+| `navinet-ops` | Corre el pipeline mensual (cron) | Login, sin grupo `docker`; sudo solo para `/usr/local/sbin/informe-restart-dashboard` (lo configura el instalador) |
 
 Las claves públicas SSH las entregaremos al momento del aprovisionamiento.
 

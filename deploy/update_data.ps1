@@ -33,6 +33,12 @@ try {
 
     $tmp = $DataFile + ".tmp"
     Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $tmp -UseBasicParsing
+    # An interrupted download must never replace the working DB
+    if ((Get-Item $tmp).Length -ne $asset.size) {
+        Remove-Item $tmp -Force
+        Log "ERROR: descarga incompleta (tamano distinto al publicado); se conserva el DB actual."
+        exit 1
+    }
     Move-Item $tmp $DataFile -Force
 
     $mb = "{0:N0}" -f ((Get-Item $DataFile).Length / 1MB)
