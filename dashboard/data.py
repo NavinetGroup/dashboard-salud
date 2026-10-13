@@ -70,14 +70,6 @@ _MES_CASE = """CASE UPPER(TRIM(mes))
     ELSE 0 END"""
 
 
-def _dd(col: str) -> str:
-    return f"TRY_CAST(REPLACE(REPLACE({col}, '.', ''), ',', '.') AS DOUBLE)"
-
-
-def _di(col: str) -> str:
-    return f"TRY_CAST(REPLACE(REPLACE({col}, '.', ''), ',', '') AS BIGINT)"
-
-
 # ---------------------------------------------------------------------------
 # GeoJSON
 # ---------------------------------------------------------------------------
@@ -187,19 +179,52 @@ def get_source_periods() -> dict[str, str]:
 
 
 # ---------------------------------------------------------------------------
-# Metrics — base (uses pre-built views = latest data)
+# Metrics — computed by the pipeline (pipeline/metricas.py)
+#
+# metricas_*_periodo hold one row per entity for every (year, month) offered by
+# the selectors; the v_metricas_* views hold the latest data. The dashboard only
+# filters rows: no metric is re-derived here, so the numbers always match the
+# pipeline's period rules and weighted aggregations.
 # ---------------------------------------------------------------------------
+
+def _has_table(con: duckdb.DuckDBPyConnection, name: str) -> bool:
+    return con.execute(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_name = ?", [name]
+    ).fetchone()[0] > 0
+
+
+def _metrics(level: str, year: int | None, month: str | None,
+             dep_codigo: int | None = None) -> pd.DataFrame:
+    con = _connect()
+    try:
+        params: list = []
+        dep_sql = ''
+        if dep_codigo is not None:
+            dep_sql = 'AND geo_dep_codigo = ?'
+            params.append(int(dep_codigo))
+        order = 'municipio' if level == 'municipio' else 'departamento'
+        table = f'metricas_{level}_periodo'
+        if year is not None and _has_table(con, table):
+            df = con.execute(
+                f"SELECT * EXCLUDE (anio_filtro, mes_filtro) FROM {table} "
+                f"WHERE anio_filtro = ? AND mes_filtro IS NOT DISTINCT FROM ? {dep_sql} "
+                f"ORDER BY {order}",
+                [int(year), month, *params],
+            ).df()
+            if not df.empty:
+                return df
+        # Latest data (also the fallback for a DB built before the period tables existed)
+        return con.execute(
+            f"SELECT * FROM v_metricas_{level} WHERE TRUE {dep_sql} ORDER BY {order}", params
+        ).df()
+    finally:
+        con.close()
+
 
 @st.cache_data(ttl=3600)
 def get_dept_metrics(year: int | None = None, month: str | None = None) -> pd.DataFrame:
-    """Return dept-level metrics. When year/month given, overlay time-sensitive columns."""
-    con = _connect()
-    df = con.execute("SELECT * FROM v_metricas_departamento ORDER BY departamento").df()
-
-    if year is not None:
-        df = _overlay_dept_year(con, df, year, month)
-
-    con.close()
+    """Dept-level metrics for the selected year/month (None = latest data)."""
+    df = _metrics('departamento', year, month)
     df['dep_str'] = df['geo_dep_codigo'].astype(str).str.zfill(2)
     return df
 
@@ -208,280 +233,8 @@ def get_dept_metrics(year: int | None = None, month: str | None = None) -> pd.Da
 def get_mun_metrics(dep_codigo: int | None = None,
                     year: int | None = None,
                     month: str | None = None) -> pd.DataFrame:
-    """Return municipality-level metrics, optionally filtered by dept and year/month."""
-    con = _connect()
-    where = f"WHERE geo_dep_codigo = {dep_codigo}" if dep_codigo is not None else ""
-    df = con.execute(f"SELECT * FROM v_metricas_municipio {where} ORDER BY municipio").df()
-
-    if year is not None:
-        df = _overlay_mun_year(con, df, year, month, dep_codigo)
-
-    con.close()
-    return df
-
-
-# ---------------------------------------------------------------------------
-# Year-filter overlays — replace time-sensitive columns in place
-# ---------------------------------------------------------------------------
-
-def _overlay_dept_year(con: duckdb.DuckDBPyConnection,
-                       df: pd.DataFrame,
-                       year: int,
-                       month: str | None) -> pd.DataFrame:
-    month_filter = f"AND UPPER(TRIM(mes)) = '{month}'" if month else ""
-    pe_filter = ""  # use latest period within year
-
-    patches: list[tuple[str, str]] = [
-        # (query_sql, merge_on)
-        # Afiliacion
-        (f"""
-        SELECT geo_dep_codigo,
-               SUM(afiliados_subsidiado)                AS afiliados_subsidiado,
-               SUM(afiliados_contributivo)              AS afiliados_contributivo,
-               SUM(afiliados_total)                     AS afiliados_total,
-               AVG(TRY_CAST(Cobertura AS DOUBLE)) * 100 AS cobertura_pct
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_MES_CASE} DESC
-            ) AS rn
-            FROM v_afiliacion
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {month_filter}
-        ) WHERE rn = 1
-        GROUP BY geo_dep_codigo
-        """, ['afiliados_subsidiado', 'afiliados_contributivo', 'afiliados_total', 'cobertura_pct']),
-
-        # IRCA
-        (f"""
-        SELECT geo_dep_codigo, AVG(promedio_irca) AS irca_promedio
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_MES_CASE} DESC
-            ) AS rn
-            FROM v_irca WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {month_filter}
-        ) WHERE rn = 1
-        GROUP BY geo_dep_codigo
-        """, ['irca_promedio']),
-
-        # Mortalidad materna
-        (f"""
-        SELECT geo_dep_codigo, {_dd('razon_mm_actual')} AS razon_mortalidad_materna
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_dep_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_mortalidad_materna
-            WHERE geo_dep_codigo IS NOT NULL AND geo_mun_codigo IS NULL AND anio = {year}
-        ) WHERE rn = 1
-        """, ['razon_mortalidad_materna']),
-
-        # Sifilis congenita (dept-level: casos_sc_total = NV+MF total per entity)
-        (f"""
-        SELECT geo_dep_codigo,
-               {_di('casos_sc_total')} AS casos_sifilis_congenita,
-               NULL::DOUBLE            AS incidencia_sifilis_congenita
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_dep_codigo
-                ORDER BY CASE WHEN casos_sc_total IS NOT NULL AND casos_sc_total != '' THEN 0 ELSE 1 END,
-                         anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_sifilis_congenita
-            WHERE geo_dep_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        """, ['casos_sifilis_congenita', 'incidencia_sifilis_congenita']),
-
-        # Desnutricion aguda
-        (f"""
-        SELECT geo_dep_codigo,
-               AVG({_dd('prevalencia_por_100')}) AS prevalencia_desnutricion_aguda
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_desnutricion_aguda
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        GROUP BY geo_dep_codigo
-        """, ['prevalencia_desnutricion_aguda']),
-
-        # Mortalidad menores 5
-        (f"""
-        SELECT geo_dep_codigo,
-               {_dd('tasa_dnt')} AS tasa_mortalidad_menores5_dnt,
-               {_dd('tasa_ira')} AS tasa_mortalidad_menores5_ira,
-               {_dd('tasa_eda')} AS tasa_mortalidad_menores5_eda
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_dep_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_mortalidad_menores5
-            WHERE geo_dep_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        """, ['tasa_mortalidad_menores5_dnt', 'tasa_mortalidad_menores5_ira',
-               'tasa_mortalidad_menores5_eda']),
-
-        # Dengue
-        (f"""
-        SELECT geo_dep_codigo,
-               {_dd('dengue_total')} AS dengue_total,
-               {_dd('dengue_grave_total')} AS dengue_grave_total,
-               {_dd('incidencia_x100k')} AS incidencia_dengue_x100k
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_dep_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_dengue WHERE geo_dep_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        """, ['dengue_total', 'dengue_grave_total', 'incidencia_dengue_x100k']),
-
-        # Intento suicidio
-        (f"""
-        SELECT geo_dep_codigo, AVG({_dd('tasa')}) AS tasa_intento_suicidio
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_intento_suicidio
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        GROUP BY geo_dep_codigo
-        """, ['tasa_intento_suicidio']),
-
-        # Violencia genero
-        (f"""
-        SELECT geo_dep_codigo,
-               {_dd('violencia_fisica')} AS violencia_fisica,
-               {_dd('violencia_psicologica')} AS violencia_psicologica,
-               {_dd('negligencia_abandono')} AS negligencia_abandono,
-               {_dd('violencia_sexual')} AS violencia_sexual,
-               {_dd('violencia_genero_intrafamiliar')} AS violencia_genero_intrafamiliar
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_dep_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_violencia_genero WHERE geo_dep_codigo IS NOT NULL AND anio = {year}
-        ) WHERE rn = 1
-        """, ['violencia_fisica', 'violencia_psicologica', 'negligencia_abandono',
-               'violencia_sexual', 'violencia_genero_intrafamiliar']),
-    ]
-
-    for sql, cols in patches:
-        try:
-            patch = con.execute(sql).df()
-            if patch.empty:
-                continue
-            for c in cols:
-                df.drop(columns=[c], errors='ignore', inplace=True)
-            df = df.merge(patch[['geo_dep_codigo'] + [c for c in cols if c in patch.columns]],
-                          on='geo_dep_codigo', how='left')
-        except Exception:
-            pass
-
-    # Demographics — year filter
-    try:
-        dem = con.execute(f"""
-            SELECT geo_dep_codigo,
-                   SUM(CASE WHEN sexo = 'HOMBRES' THEN poblacion ELSE 0 END) AS pob_hombres,
-                   SUM(CASE WHEN sexo = 'MUJERES' THEN poblacion ELSE 0 END) AS pob_mujeres,
-                   SUM(poblacion) AS pob_total
-            FROM v_demografico_edad_sexo
-            WHERE anio = {year} AND geo_dep_codigo IS NOT NULL
-            GROUP BY geo_dep_codigo
-        """).df()
-        if not dem.empty:
-            df.drop(columns=['pob_hombres', 'pob_mujeres', 'pob_total'], errors='ignore', inplace=True)
-            df = df.merge(dem, on='geo_dep_codigo', how='left')
-    except Exception:
-        pass
-
-    return df
-
-
-def _overlay_mun_year(con: duckdb.DuckDBPyConnection,
-                      df: pd.DataFrame,
-                      year: int,
-                      month: str | None,
-                      dep_codigo: int | None) -> pd.DataFrame:
-    dep_filter = f"AND geo_dep_codigo = {dep_codigo}" if dep_codigo is not None else ""
-    month_filter = f"AND UPPER(TRIM(mes)) = '{month}'" if month else ""
-
-    patches: list[tuple[str, list[str]]] = [
-        (f"""
-        SELECT geo_dep_codigo, geo_mun_codigo,
-               afiliados_subsidiado, afiliados_contributivo, afiliados_total,
-               TRY_CAST(Cobertura AS DOUBLE) * 100 AS cobertura_pct
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_MES_CASE} DESC
-            ) AS rn
-            FROM v_afiliacion
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {month_filter} {dep_filter}
-        ) WHERE rn = 1
-        """, ['afiliados_subsidiado', 'afiliados_contributivo', 'afiliados_total', 'cobertura_pct']),
-
-        (f"""
-        SELECT geo_dep_codigo, geo_mun_codigo,
-               promedio_irca AS irca_promedio, nivel_riesgo AS irca_nivel_riesgo
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_MES_CASE} DESC
-            ) AS rn
-            FROM v_irca WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {month_filter} {dep_filter}
-        ) WHERE rn = 1
-        """, ['irca_promedio', 'irca_nivel_riesgo']),
-
-        (f"""
-        SELECT geo_dep_codigo, geo_mun_codigo,
-               {_dd('razon_mm_actual')} AS razon_mortalidad_materna
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_mortalidad_materna
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {dep_filter}
-        ) WHERE rn = 1
-        """, ['razon_mortalidad_materna']),
-
-        # Sifilis congenita is dept-level only — incidencia NULL for municipalities
-
-        (f"""
-        SELECT geo_dep_codigo, geo_mun_codigo,
-               {_dd('prevalencia_por_100')} AS prevalencia_desnutricion_aguda
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_desnutricion_aguda
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {dep_filter}
-        ) WHERE rn = 1
-        """, ['prevalencia_desnutricion_aguda']),
-
-        (f"""
-        SELECT geo_dep_codigo, geo_mun_codigo,
-               {_dd('tasa')} AS tasa_intento_suicidio
-        FROM (
-            SELECT *, ROW_NUMBER() OVER (
-                PARTITION BY geo_mun_codigo ORDER BY anio DESC, {_PE_CASE} DESC
-            ) AS rn
-            FROM v_ins_intento_suicidio
-            WHERE geo_mun_codigo IS NOT NULL AND anio = {year} {dep_filter}
-        ) WHERE rn = 1
-        """, ['tasa_intento_suicidio']),
-    ]
-
-    for sql, cols in patches:
-        try:
-            patch = con.execute(sql).df()
-            if patch.empty:
-                continue
-            for c in cols:
-                df.drop(columns=[c], errors='ignore', inplace=True)
-            df = df.merge(patch[['geo_mun_codigo'] + [c for c in cols if c in patch.columns]],
-                          on='geo_mun_codigo', how='left')
-        except Exception:
-            pass
-
-    return df
+    """Municipality-level metrics, optionally filtered by dept, for the selected period."""
+    return _metrics('municipio', year, month, dep_codigo)
 
 
 # ---------------------------------------------------------------------------
