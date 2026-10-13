@@ -29,6 +29,13 @@ from pathlib import Path
 
 import duckdb
 
+try:
+    from scrapers.geo_normalize import DISTRICTS
+except ImportError:  # run directly as `python pipeline/metricas.py`
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from scrapers.geo_normalize import DISTRICTS
+
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -80,6 +87,14 @@ def _month_cond(month: str | None) -> str:
 # INS entity rows: a department's own row (districts are separate entities)
 _DEPT_ROW = "geo_dep_codigo IS NOT NULL AND geo_mun_codigo IS NULL AND geo_distrito_codigo IS NULL"
 _DISTRICT_ROW = "geo_distrito_codigo IS NOT NULL"
+_COUNTRY_ROW = "TRIM(entidad_territorial) ILIKE 'colombia'"
+_DISTRICT_CODES = ', '.join(str(c) for c in sorted(set(DISTRICTS.values())))
+
+# Dengue incidence is computed here (cases / DANE population · 100k) instead of read
+# from the INS PDF: the 2026 bulletins lost their decimal comma ('471,8' → '4718'),
+# so the extracted rate is off by an unknown power of ten. INS divides by population
+# at risk, so this total-population rate is lower than the bulletin's; the dashboard
+# labels it. The SIVIGILA rebuild will use this same method.
 
 
 def _dd(col: str) -> str:
@@ -349,13 +364,14 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
     SELECT geo_distrito_codigo,
            {_dd('dengue_total')}       AS dengue_total,
            {_dd('dengue_grave_total')} AS dengue_grave_total,
-           {_dd('incidencia_x100k')}   AS incidencia_dengue_x100k,
            {_PE_LABEL}                 AS periodo_dengue
     FROM ({ins('v_ins_dengue', _DISTRICT_ROW,
                    'geo_distrito_codigo', 'dengue_total DESC NULLS LAST')})"""))
         join_clauses.append("LEFT JOIN dengue ON gm.mun_codigo = dengue.geo_distrito_codigo")
+        inc = ('dengue.dengue_total * 100000.0 / NULLIF(dem.pob_total, 0)'
+               if ev.get('v_demografico_edad_sexo') else 'NULL::DOUBLE')
         select_extra += ['dengue.dengue_total', 'dengue.dengue_grave_total',
-                         'dengue.incidencia_dengue_x100k', 'dengue.periodo_dengue']
+                         f'{inc} AS incidencia_dengue_x100k', 'dengue.periodo_dengue']
     else:
         select_extra += ['NULL::DOUBLE AS dengue_total', 'NULL::DOUBLE AS dengue_grave_total',
                          'NULL::DOUBLE AS incidencia_dengue_x100k', 'NULL::VARCHAR AS periodo_dengue']
@@ -437,7 +453,14 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     FROM v_demografico_edad_sexo
     WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL
     GROUP BY 1"""))
+        # INS department rows exclude the districts, so their rates need this denominator
+        ctefile.append(('pob_sin_dist', f"""
+    SELECT geo_dep_codigo, SUM(poblacion) AS pob
+    FROM v_demografico_edad_sexo
+    WHERE anio = {pob_year} AND geo_mun_codigo NOT IN ({_DISTRICT_CODES})
+    GROUP BY 1"""))
         join_clauses.append("LEFT JOIN dem   ON gd.dep_codigo = dem.geo_dep_codigo")
+        join_clauses.append("LEFT JOIN pob_sin_dist ON gd.dep_codigo = pob_sin_dist.geo_dep_codigo")
         select_extra += ['dem.pob_hombres', 'dem.pob_mujeres', 'dem.pob_total']
     else:
         select_extra += ['NULL::BIGINT AS pob_hombres', 'NULL::BIGINT AS pob_mujeres', 'NULL::BIGINT AS pob_total']
@@ -667,13 +690,14 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     SELECT geo_dep_codigo,
            {_dd('dengue_total')}       AS dengue_total,
            {_dd('dengue_grave_total')} AS dengue_grave_total,
-           {_dd('incidencia_x100k')}   AS incidencia_dengue_x100k,
            {_PE_LABEL}                 AS periodo_dengue
     FROM ({ins('v_ins_dengue', _DEPT_ROW,
                    'geo_dep_codigo', 'dengue_total DESC NULLS LAST')})"""))
         join_clauses.append("LEFT JOIN dengue ON gd.dep_codigo = dengue.geo_dep_codigo")
+        inc = ('dengue.dengue_total * 100000.0 / NULLIF(pob_sin_dist.pob, 0)'
+               if ev.get('v_demografico_edad_sexo') else 'NULL::DOUBLE')
         select_extra += ['dengue.dengue_total', 'dengue.dengue_grave_total',
-                         'dengue.incidencia_dengue_x100k', 'dengue.periodo_dengue']
+                         f'{inc} AS incidencia_dengue_x100k', 'dengue.periodo_dengue']
     else:
         select_extra += [
             'NULL::DOUBLE AS dengue_total', 'NULL::DOUBLE AS dengue_grave_total',
@@ -748,6 +772,103 @@ FROM geo_dep gd
 
 
 # ---------------------------------------------------------------------------
+# National view (one row) — the reference the dashboard compares against
+# ---------------------------------------------------------------------------
+
+def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | None = None) -> str:
+    """One row of national rates, same column names as the department view.
+
+    INS rates come from the bulletin's own 'Colombia' row; the rest are pooled
+    nationally (Σnumerador / Σdenominador). Counts that only make sense per
+    territory (IPS, cases) are left to the dashboard as departmental averages.
+    """
+    pob_year = _pob_year(year)
+
+    def ins(view, where, order):
+        return _latest(view, f"({where}) AND {_year_cond(year)}", _PE_KEY, "'colombia'", order)
+
+    parts: list[tuple[str, str, list[str]]] = []   # (cte name, body, columns)
+
+    if ev.get('v_demografico_edad_sexo'):
+        parts.append(('dem', f"""
+    SELECT SUM(poblacion) AS pob_total
+    FROM v_demografico_edad_sexo WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL""",
+                      ['pob_total']))
+    if ev.get('v_afiliacion'):
+        parts.append(('afil', f"""
+    SELECT LEAST(100.0, 100.0 * SUM(afiliados_total)
+                 / NULLIF(SUM(TRY_CAST("Población" AS DOUBLE)), 0)) AS cobertura_pct,
+           ANY_VALUE({_MES_LABEL}) AS periodo_afiliacion
+    FROM ({_afil_latest(year, month)})""", ['cobertura_pct', 'periodo_afiliacion']))
+    if ev.get('v_irca'):
+        parts.append(('irca', f"""
+    SELECT SUM(promedio_irca * n_muestras) / NULLIF(SUM(n_muestras), 0) AS irca_promedio
+    FROM ({_irca_latest_per_mun(year, month)})
+    WHERE promedio_irca IS NOT NULL AND n_muestras > 0""", ['irca_promedio']))
+    if ev.get('v_ins_mortalidad_materna'):
+        parts.append(('mm', f"""
+    SELECT {_dd('razon_mm_actual')} AS razon_mortalidad_materna,
+           {_PE_LABEL} AS periodo_mortalidad_materna
+    FROM ({ins('v_ins_mortalidad_materna', _COUNTRY_ROW, 'razon_mm_actual DESC NULLS LAST')})""",
+                      ['razon_mortalidad_materna', 'periodo_mortalidad_materna']))
+    if ev.get('v_ins_desnutricion_aguda'):
+        parts.append(('dnt', f"""
+    SELECT 100.0 * SUM(c) FILTER (WHERE p > 0) / NULLIF(SUM(c / (p / 100.0)) FILTER (WHERE p > 0), 0)
+               AS prevalencia_desnutricion_aguda,
+           ANY_VALUE(periodo) AS periodo_desnutricion
+    FROM (
+        SELECT {_di('casos')} AS c, {_dd('prevalencia_por_100')} AS p, {_PE_LABEL} AS periodo
+        FROM ({_latest('v_ins_desnutricion_aguda', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)}",
+                       _PE_KEY, 'geo_mun_codigo', 'casos DESC NULLS LAST')})
+    )""", ['prevalencia_desnutricion_aguda', 'periodo_desnutricion']))
+    if ev.get('v_ins_mortalidad_menores5'):
+        parts.append(('men5', f"""
+    SELECT {_dd('tasa_dnt')} AS tasa_mortalidad_menores5_dnt,
+           {_dd('tasa_ira')} AS tasa_mortalidad_menores5_ira,
+           {_dd('tasa_eda')} AS tasa_mortalidad_menores5_eda,
+           {_PE_LABEL}       AS periodo_menores5
+    FROM ({ins('v_ins_mortalidad_menores5', _COUNTRY_ROW, 'tasa_dnt DESC NULLS LAST')})""",
+                      ['tasa_mortalidad_menores5_dnt', 'tasa_mortalidad_menores5_ira',
+                       'tasa_mortalidad_menores5_eda', 'periodo_menores5']))
+    if ev.get('v_ins_dengue') and ev.get('v_demografico_edad_sexo'):
+        parts.append(('dengue', f"""
+    SELECT {_dd('dengue_total')} * 100000.0
+               / (SELECT SUM(poblacion) FROM v_demografico_edad_sexo
+                  WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) AS incidencia_dengue_x100k,
+           {_PE_LABEL} AS periodo_dengue
+    FROM ({ins('v_ins_dengue', _COUNTRY_ROW, 'dengue_total DESC NULLS LAST')})""",
+                      ['incidencia_dengue_x100k', 'periodo_dengue']))
+    if ev.get('v_ins_intento_suicidio') and ev.get('v_demografico_edad_sexo'):
+        parts.append(('sui', f"""
+    SELECT SUM({_dd('s.tasa')} * p.pob) / NULLIF(SUM(p.pob), 0) AS tasa_intento_suicidio,
+           ANY_VALUE(CAST(s.anio AS VARCHAR) || ' PE ' || s.periodo_epidemiologico) AS periodo_suicidio
+    FROM ({_latest('v_ins_intento_suicidio', f"geo_mun_codigo IS NOT NULL AND {_year_cond(year)}",
+                   _PE_KEY, 'geo_mun_codigo', 'tasa DESC NULLS LAST')}) s
+    JOIN (SELECT geo_mun_codigo, SUM(poblacion) AS pob FROM v_demografico_edad_sexo
+          WHERE anio = {pob_year} GROUP BY 1) p ON p.geo_mun_codigo = s.geo_mun_codigo
+    WHERE {_dd('s.tasa')} IS NOT NULL""", ['tasa_intento_suicidio', 'periodo_suicidio']))
+    if ev.get('v_ins_violencia_genero'):
+        parts.append(('viol', f"""
+    SELECT {_dd('violencia_fisica')}      AS violencia_fisica,
+           {_dd('violencia_psicologica')} AS violencia_psicologica,
+           {_dd('negligencia_abandono')}  AS negligencia_abandono,
+           {_dd('violencia_sexual')}      AS violencia_sexual,
+           {_PE_LABEL}                    AS periodo_violencia
+    FROM ({ins('v_ins_violencia_genero', _COUNTRY_ROW, 'violencia_fisica DESC NULLS LAST')})""",
+                      ['violencia_fisica', 'violencia_psicologica', 'negligencia_abandono',
+                       'violencia_sexual', 'periodo_violencia']))
+
+    if not parts:
+        return "SELECT NULL::DOUBLE AS pob_total"
+    ctes = ',\n'.join(f'{name} AS ({body}\n)' for name, body, _ in parts)
+    cols = ', '.join(f'{name}.{c}' for name, _, cs in parts for c in cs)
+    # Each CTE yields at most one row; LEFT JOIN ON TRUE keeps the row when one is empty
+    base, *rest = [name for name, _, _ in parts]
+    joins = ' '.join(f'LEFT JOIN {name} ON TRUE' for name in rest)
+    return f"WITH {ctes}\nSELECT {cols} FROM {base} {joins}"
+
+
+# ---------------------------------------------------------------------------
 # Per-period tables for the dashboard's year / month selectors
 # ---------------------------------------------------------------------------
 
@@ -774,14 +895,15 @@ def _period_grid(con: duckdb.DuckDBPyConnection) -> list[tuple[int, str | None]]
 
 
 def _build_period_tables(con: duckdb.DuckDBPyConnection, ev: dict[str, bool]) -> None:
-    """metricas_{municipio,departamento}_periodo: the same metrics as the views, once
+    """metricas_{municipio,departamento,nacional}_periodo: the same metrics as the views, once
     per (anio_filtro, mes_filtro). mes_filtro NULL = latest data within the year.
 
     The dashboard reads these rows instead of re-deriving metrics in its own SQL, so
     the pipeline is the single source of truth for every number shown.
     """
     grid = _period_grid(con)
-    for level, build in (('municipio', _municipio_sql), ('departamento', _departamento_sql)):
+    for level, build in (('municipio', _municipio_sql), ('departamento', _departamento_sql),
+                         ('nacional', _nacional_sql)):
         table = f'metricas_{level}_periodo'
         parts = [
             f"SELECT {y} AS anio_filtro, "
@@ -828,7 +950,8 @@ def build_all(db_path: 'str | Path') -> None:
 
         con.execute(f"CREATE OR REPLACE VIEW v_metricas_municipio AS {_municipio_sql(ev)}")
         con.execute(f"CREATE OR REPLACE VIEW v_metricas_departamento AS {_departamento_sql(ev)}")
-        for v in ('v_metricas_municipio', 'v_metricas_departamento'):
+        con.execute(f"CREATE OR REPLACE VIEW v_metricas_nacional AS {_nacional_sql(ev)}")
+        for v in ('v_metricas_municipio', 'v_metricas_departamento', 'v_metricas_nacional'):
             n = con.execute(f"SELECT COUNT(*) FROM {v}").fetchone()[0]
             print(f'  {v}: {n:,} filas')
 

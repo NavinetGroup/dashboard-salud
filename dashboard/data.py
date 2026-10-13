@@ -230,6 +230,27 @@ def get_dept_metrics(year: int | None = None, month: str | None = None) -> pd.Da
 
 
 @st.cache_data(ttl=3600)
+def get_nat_metrics(year: int | None = None, month: str | None = None) -> pd.Series:
+    """National reference row (true national rates). Empty on a DB built before it existed."""
+    con = _connect()
+    try:
+        if year is not None and _has_table(con, 'metricas_nacional_periodo'):
+            df = con.execute(
+                "SELECT * EXCLUDE (anio_filtro, mes_filtro) FROM metricas_nacional_periodo "
+                "WHERE anio_filtro = ? AND mes_filtro IS NOT DISTINCT FROM ?",
+                [int(year), month]).df()
+            if not df.empty:
+                return df.iloc[0]
+        if _has_table(con, 'v_metricas_nacional'):
+            df = con.execute("SELECT * FROM v_metricas_nacional").df()
+            if not df.empty:
+                return df.iloc[0]
+        return pd.Series(dtype=object)
+    finally:
+        con.close()
+
+
+@st.cache_data(ttl=3600)
 def get_mun_metrics(dep_codigo: int | None = None,
                     year: int | None = None,
                     month: str | None = None) -> pd.DataFrame:

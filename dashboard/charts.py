@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """Plotly figure builders for the dashboard."""
 
-import math
 
 import pandas as pd
 import plotly.express as px
@@ -44,23 +43,6 @@ _ETHNIC_COLS = [
     ('pob_palenquera',   'Palenquera'),
     ('pob_ninguno',      'Sin pertenencia'),
 ]
-
-_INS_ROWS = [
-    ('razon_mortalidad_materna',       'Mort. materna',            'x100k NV'),
-    ('incidencia_sifilis_congenita',   'Sífilis congénita',        'x100k NV'),
-    ('prevalencia_desnutricion_aguda', 'Desnutrición aguda',       'x100k <5'),
-    ('tasa_mortalidad_menores5_dnt',   'Mort. <5 desnutrición',    'x100k <5'),
-    ('tasa_mortalidad_menores5_ira',   'Mort. <5 IRA',             'x100k <5'),
-    ('tasa_mortalidad_menores5_eda',   'Mort. <5 EDA',             'x100k <5'),
-    ('incidencia_dengue_x100k',        'Dengue',                   'x100k hab'),
-    ('tasa_intento_suicidio',          'Intento suicidio',         'x100k hab'),
-    ('violencia_genero_intrafamiliar', 'Violencia género/intrafam','casos'),
-    ('violencia_fisica',               'Violencia física',         'casos'),
-    ('violencia_psicologica',          'Violencia psicológica',    'casos'),
-    ('negligencia_abandono',           'Negligencia/abandono',     'casos'),
-    ('violencia_sexual',               'Violencia sexual',         'casos'),
-]
-
 
 def gauge_irca(value: float | None, risk_level: str = '',
               title: str = 'IRCA promedio') -> go.Figure:
@@ -345,50 +327,34 @@ def bar_dift18_scores(indicators: list[tuple[str, float | None]],
     return fig
 
 
-def bar_violence(row: pd.Series, title: str = 'Violencia de género e intrafamiliar') -> go.Figure:
-    """Grouped bar of violence sub-types."""
+def bar_violence(row: pd.Series, nat: pd.Series | None = None, label: str = '',
+                 title: str = 'Violencia por sub-tipo (tasa por 100.000 hab.)') -> go.Figure:
+    """Sub-type rates per 100k for the entity, next to the national rate.
+
+    The total of notified cases is a count, not a rate, so it is shown in the
+    panel beside the chart rather than on this axis.
+    """
     cats = [
-        ('violencia_fisica',               'Violencia física'),
-        ('violencia_psicologica',          'Violencia psicológica'),
-        ('negligencia_abandono',           'Negligencia / abandono'),
-        ('violencia_sexual',               'Violencia sexual'),
-        ('violencia_genero_intrafamiliar', 'Total género/intrafamiliar'),
+        ('violencia_fisica',      'Física'),
+        ('violencia_psicologica', 'Psicológica'),
+        ('negligencia_abandono',  'Negligencia / abandono'),
+        ('violencia_sexual',      'Sexual'),
     ]
     names = [lbl for _, lbl in cats]
-    vals  = [_n(row.get(col)) for col, _ in cats]
-    colors = ['#EF9A9A', '#F48FB1', '#CE93D8', '#80DEEA', '#EF5350']
-    fig = go.Figure(go.Bar(x=names, y=vals, marker_color=colors,
-                           text=[f'{v:,.0f}' if v else '' for v in vals],
-                           textposition='outside'))
-    fig.update_layout(title=title, yaxis_title='Casos', height=340,
-                      margin={'t': 50, 'b': 10, 'l': 10, 'r': 10},
-                      plot_bgcolor='white', yaxis={'gridcolor': '#F0F0F0'})
-    return fig
-
-
-def bar_ins(row: pd.Series, title: str = 'Indicadores de salud pública') -> go.Figure:
-    labels, vals, units = [], [], []
-    for col, lbl, unit in _INS_ROWS:
-        v = row.get(col)
-        if v is not None and not pd.isna(v) and v > 0:
-            labels.append(f'{lbl}\n({unit})')
-            vals.append(float(v))
-            units.append(unit)
-    if not vals:
-        fig = go.Figure()
-        fig.update_layout(title=title,
-                          annotations=[{'text': 'Sin datos disponibles',
-                                        'xref': 'paper', 'yref': 'paper',
-                                        'x': 0.5, 'y': 0.5, 'showarrow': False}],
-                          height=250)
-        return fig
-    fig = px.bar(x=vals, y=labels, orientation='h',
-                 labels={'x': 'Valor', 'y': ''},
-                 title=title,
-                 color=vals, color_continuous_scale='Oranges')
-    fig.update_layout(yaxis={'categoryorder': 'total ascending'},
-                      height=max(250, len(vals) * 45),
-                      margin={'t': 50, 'b': 10, 'l': 10, 'r': 10},
-                      showlegend=False)
-    fig.update_coloraxes(showscale=False)
+    fig = go.Figure()
+    fig.add_bar(name=label or 'Entidad', x=names,
+                y=[_n(row.get(col)) for col, _ in cats], marker_color='#EF5350',
+                text=[f'{_n(row.get(col)):,.1f}' if not _is_null(row.get(col)) else ''
+                      for col, _ in cats],
+                textposition='outside')
+    if nat is not None and not nat.empty:
+        fig.add_bar(name='Nacional', x=names,
+                    y=[_n(nat.get(col)) for col, _ in cats], marker_color='#B0BEC5',
+                    text=[f'{_n(nat.get(col)):,.1f}' if not _is_null(nat.get(col)) else ''
+                          for col, _ in cats],
+                    textposition='outside')
+    fig.update_layout(title=title, yaxis_title='Tasa por 100.000 hab.', barmode='group',
+                      height=340, margin={'t': 50, 'b': 10, 'l': 10, 'r': 10},
+                      plot_bgcolor='white', yaxis={'gridcolor': '#F0F0F0'},
+                      legend={'orientation': 'h', 'y': -0.15})
     return fig
