@@ -25,8 +25,10 @@ from selenium.webdriver.support.ui import WebDriverWait, Select
 
 try:
     from scrapers.errors import ScrapeError
+    from scrapers.settings import manual_dir
 except ImportError:  # run directly as `python scrapers/<name>.py`
     from errors import ScrapeError
+    from settings import manual_dir
 
 log = logging.getLogger(__name__)
 
@@ -383,13 +385,15 @@ def run(base_dir: str = None) -> None:
     parquet_dir.mkdir(parents=True, exist_ok=True)
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    # Manually downloaded CSVs (sivicap.ins.gov.co → data/raw/irca_manual/).
-    # Each one is ingested once and then moved to irca_manual/procesados/, so a
-    # stale file is never re-published as a new month.
-    manual_dir = raw_dir / 'irca_manual'
-    done_dir = manual_dir / 'procesados'
+    # Manually downloaded CSVs (sivicap.ins.gov.co → <manuales>/irca/, see
+    # scrapers/settings.py; data/raw/irca_manual/ is still read for old drops).
+    # Each one is ingested once and then moved to irca/procesados/, so a stale
+    # file is never re-published as a new month.
+    in_dir = manual_dir('irca')
+    done_dir = in_dir / 'procesados'
     done_dir.mkdir(parents=True, exist_ok=True)
-    manual_csvs = sorted(manual_dir.glob('*.csv'), key=lambda p: p.stat().st_mtime)
+    manual_csvs = sorted([*in_dir.glob('*.csv'), *(raw_dir / 'irca_manual').glob('*.csv')],
+                         key=lambda p: p.stat().st_mtime)
     ingested = 0
     for src in manual_csvs:
         print(f'irca_scraper: usando archivo manual {src.name}')
@@ -409,8 +413,9 @@ def run(base_dir: str = None) -> None:
 
         if downloaded is None:
             raise ScrapeError(
-                'irca: SIVICAP no entregó datos (probable reCAPTCHA). Descargue el CSV '
-                'manualmente en data/raw/irca_manual/ y re-ejecute (ver MANTENIMIENTO.md).')
+                'irca: SIVICAP no entregó datos (probable reCAPTCHA). Renueve la sesión con '
+                '"Renovar sesion SIVICAP.bat", o descargue el CSV a mano en '
+                f'{manual_dir("irca")} y re-ejecute (ver MANTENIMIENTO.md).')
 
         print(f'irca_scraper: procesando {downloaded.name}')
         df = _parse_irca(downloaded)

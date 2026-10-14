@@ -32,3 +32,6 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Local settings of the processing machine (copy of informe_regional.example.toml)
+informe_regional.toml

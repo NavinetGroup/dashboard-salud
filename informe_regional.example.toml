@@ -1,0 +1,16 @@
+# Configuración local del equipo que procesa los datos.
+# Copie este archivo como informe_regional.toml (no se sube a git) y ajuste lo necesario.
+# Cada valor también se puede fijar con una variable de entorno, que tiene prioridad.
+
+[rutas]
+# Carpeta de archivos descargados a mano (CSV de IRCA desde SIVICAP, ZIP de afiliación).
+# Dentro se usan las subcarpetas irca/ y afiliacion/; lo ya cargado pasa a procesados/.
+# Hoy: carpeta del proyecto. Más adelante: la biblioteca de SharePoint sincronizada con
+# OneDrive, por ejemplo  manuales = "~/Supersalud/Informe Regional - Archivos"
+# Variable de entorno: INFORME_MANUAL_DIR
+manuales = "data/manual"
+
+[publicacion]
+# Repositorio de GitHub donde se publica cada mes la base de datos del visor.
+# Variable de entorno: INFORME_GITHUB_REPO
+repo = "NavinetGroup/dashboard-salud"

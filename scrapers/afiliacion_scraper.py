@@ -22,8 +22,10 @@ import requests
 
 try:
     from scrapers.errors import ScrapeError
+    from scrapers.settings import manual_dir
 except ImportError:  # run directly as `python scrapers/<name>.py`
     from errors import ScrapeError
+    from settings import manual_dir
 
 log = logging.getLogger(__name__)
 
@@ -254,8 +256,9 @@ def _normalize_df(df: pl.DataFrame, year: int, month: int) -> pl.DataFrame:
 
 
 def _local_zip(base_dir: Path, year: int, month: int) -> Path | None:
-    """A manually downloaded ZIP for this period, in the project root or data/raw."""
-    for folder in (base_dir, base_dir / 'data' / 'raw'):
+    """A manually downloaded ZIP for this period: <manuales>/afiliacion/ (see
+    scrapers/settings.py), or the older spots, the project root and data/raw."""
+    for folder in (manual_dir('afiliacion'), base_dir, base_dir / 'data' / 'raw'):
         for p in folder.glob('*.zip'):
             if 'afiliacion' in p.name.lower() and _period_from_name(p.name) == (year, month):
                 return p
