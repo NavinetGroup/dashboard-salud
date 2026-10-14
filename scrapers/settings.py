@@ -13,6 +13,12 @@ or set the matching environment variable, which wins over the file.
                                           "~/Supersalud/Informe Regional - Archivos"
   [publicacion] repo INFORME_GITHUB_REPO  GitHub repo whose releases carry the
                                           monthly database for the viewer app
+                                          ('' = do not publish on GitHub)
+  [publicacion] carpeta INFORME_PUBLICACION_DIR
+                                          shared folder (SharePoint library synced
+                                          with OneDrive, network drive) where the
+                                          monthly database is copied; every viewer
+                                          configured with the same folder picks it up
 """
 
 import os
@@ -25,7 +31,13 @@ _CFG = tomllib.loads(_FILE.read_text(encoding='utf-8')) if _FILE.exists() else {
 
 
 def _get(env: str, section: str, key: str, default: str) -> str:
-    return os.environ.get(env) or _CFG.get(section, {}).get(key) or default
+    """Environment variable, else the TOML value, else the default. A variable or
+    key set to '' is an explicit value (it switches an optional channel off); only
+    an absent one falls through."""
+    value = os.environ.get(env)
+    if value is None:
+        value = _CFG.get(section, {}).get(key)
+    return default if value is None else value
 
 
 def _path(value: str) -> Path:
@@ -34,8 +46,10 @@ def _path(value: str) -> Path:
 
 
 DATA_DIR = ROOT / 'data'
-MANUAL_DIR = _path(_get('INFORME_MANUAL_DIR', 'rutas', 'manuales', 'data/manual'))
+MANUAL_DIR = _path(_get('INFORME_MANUAL_DIR', 'rutas', 'manuales', 'data/manual') or 'data/manual')
 GITHUB_REPO = _get('INFORME_GITHUB_REPO', 'publicacion', 'repo', 'NavinetGroup/dashboard-salud')
+_pub = _get('INFORME_PUBLICACION_DIR', 'publicacion', 'carpeta', '')
+PUBLISH_DIR = _path(_pub) if _pub else None
 
 
 def manual_dir(source: str) -> Path:

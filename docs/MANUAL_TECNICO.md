@@ -92,6 +92,7 @@ Informe regional v2/
 │   ├── build_portable.py          genera dist/InformeRegional_<versión>.zip
 │   ├── build_geojson.py           regenera los geojson desde el MGN del DANE
 │   ├── build_docs.py              genera los .docx de los manuales
+│   ├── build_entrega.py           paquete de entrega (código, manuales, tablero, datos)
 │   └── setup_sivicap_session.py   sesión de Chrome para SIVICAP
 ├── docs/                          manuales, fórmulas, investigación de fuentes, auditoría
 ├── data/                          (no versionada) parquet, bases, manuales, dist, perfil Chrome
@@ -148,12 +149,17 @@ por defecto.
 | Clave TOML | Variable de entorno | Por defecto | Uso |
 |---|---|---|---|
 | `[rutas] manuales` | `INFORME_MANUAL_DIR` | `data/manual` | Carpeta de archivos descargados a mano. Puede apuntar a una biblioteca de SharePoint sincronizada con OneDrive |
-| `[publicacion] repo` | `INFORME_GITHUB_REPO` | `NavinetGroup/dashboard-salud` | Repositorio cuyas releases llevan la base mensual |
+| `[publicacion] carpeta` | `INFORME_PUBLICACION_DIR` | `""` (desactivado) | Carpeta compartida (SharePoint sincronizado, unidad de red) donde se copia cada mes la base del visor. **Canal recomendado dentro de la organización** |
+| `[publicacion] repo` | `INFORME_GITHUB_REPO` | `NavinetGroup/dashboard-salud` | Repositorio de GitHub con la release pública `datos-<versión>`; `""` desactiva este canal |
+| `[tablero] carpeta_actualizacion` | `INFORME_UPDATE_DIR` | `""` | (Tablero) la misma carpeta compartida, vista desde el equipo del usuario |
+| `[tablero] url_actualizacion` | `INFORME_RELEASE_URL` | release *latest* del repositorio | (Tablero) URL base con `manifest.json` y la base; `""` desactiva la descarga |
 
-`manual_dir(fuente)` devuelve `<manuales>/<fuente>` y crea la carpeta. Rutas relativas se resuelven
-contra la raíz del proyecto; se expanden `~` y variables (`%OneDrive%`).
+Un valor vacío (`""`) es un valor explícito y desactiva el canal; solo una clave ausente usa el valor
+por defecto. `manual_dir(fuente)` devuelve `<manuales>/<fuente>` y crea la carpeta. Rutas relativas se
+resuelven contra la raíz del proyecto; se expanden `~` y variables (`%OneDrive%`).
 
-El tablero tiene sus propias variables (sección 7.3).
+El tablero lee la sección `[tablero]` del mismo archivo, situado junto a la aplicación: la raíz del
+repositorio en el equipo del operador, `app\informe_regional.toml` en la versión portable (sección 7.3).
 
 ---
 
@@ -185,9 +191,17 @@ se niega a publicar un archivo viejo.
 
 Cada corrida escribe en consola y en `logs/pipeline_<AAAA-MM-DD>.log`.
 
-**Publicar:** `publicar_datos.py` muestra repositorio, versión y tamaño y pide confirmación; con `--si`
-no pregunta (uso programado). Crea la release pública `datos-<versión>` con la base y el manifiesto y
-la marca como *latest*. Desde ese momento todos los tableros se actualizan al abrirse.
+**Publicar:** `publicar_datos.py` verifica el SHA-256 de la base exportada, muestra versión, tamaño y
+canales, y pide confirmación (con `--si` no pregunta; uso programado). Según `[publicacion]`:
+
+- **Carpeta compartida** (`carpeta`): copia la base (primero a `.part`, luego renombrado atómico) y
+  después `manifest.json` a la carpeta. Si la carpeta es una biblioteca de SharePoint sincronizada con
+  OneDrive, cada tablero configurado con esa misma biblioteca instala la versión nueva al abrirse. No
+  requiere GitHub ni salida a internet.
+- **GitHub** (`repo`): crea la release pública `datos-<versión>` con los dos archivos y la marca como
+  *latest*; los tableros con `url_actualizacion` apuntando a ese repositorio la descargan.
+
+Se pueden usar los dos canales a la vez. Con ninguno configurado el script se niega a continuar.
 
 ### 4.2 Ciclo anual
 
@@ -618,23 +632,27 @@ Orden de resolución de la base a leer:
 1. `INFORME_DB_PATH` (archivo explícito; sin actualización).
 2. `data/informe_regional.duckdb` si existe (equipo del operador; muestra la base recién construida).
 3. La base del visor `INFORME_DATA_DIR/informe_regional_visor.duckdb` (por defecto `app/data/`), que
-   se actualiza al abrir la aplicación y cada 6 horas si sigue abierta:
-   - **A (manual):** cualquier `*.duckdb` en `data/actualizacion/` que sea una base del visor con versión
-     mayor se instala (copia a `.part`, verificación, `os.replace` atómico) y se borra de la carpeta. Un
-     archivo válido pero no más nuevo también se borra; uno que no es una base se deja.
-   - **B (automático):** descarga `manifest.json` de `INFORME_RELEASE_URL` (por defecto
-     `https://github.com/<INFORME_GITHUB_REPO>/releases/latest/download`; tiempo máximo 8 s); si la
+   se actualiza al abrir la aplicación y cada 6 horas si sigue abierta, consultando en este orden:
+   - **A1, carpeta propia** `data/actualizacion/`: cualquier `*.duckdb` que sea una base del visor con
+     versión mayor se instala (copia a `.part`, verificación, `os.replace` atómico). Los archivos de
+     esa carpeta que son bases del visor se borran tras mirarlos, sean nuevos o no; lo que no es una
+     base se deja.
+   - **A2, carpeta compartida** (`[tablero] carpeta_actualizacion`, p. ej. la biblioteca de SharePoint
+     sincronizada con OneDrive donde publica el operador): igual, pero **solo lectura**: nunca borra ni
+     escribe en ella. Si la carpeta no existe (OneDrive sin sincronizar), se omite.
+   - **B, URL** (`[tablero] url_actualizacion`): descarga `manifest.json` (tiempo máximo 8 s); si la
      versión publicada es mayor, descarga la base por bloques, comprueba el **SHA-256** y la instala.
-   - Cualquier fallo (sin internet, GitHub bloqueado, archivo dañado, base bloqueada por otra ventana)
-     deja la copia actual y se informa en la barra lateral ("No se pudo comprobar si hay datos más
-     recientes", con el detalle en el tooltip).
+   - La versión mayor gana; nunca se instala una versión igual o menor. Cualquier fallo (sin red, URL
+     bloqueada, carpeta sin sincronizar, archivo dañado o a medio copiar, base bloqueada por otra
+     ventana, error de sintaxis en el TOML) deja la copia actual y se informa en la barra lateral ("No
+     se pudo comprobar si hay datos más recientes", con el detalle en el tooltip).
    - Sin base, o con una base dañada, la página muestra las instrucciones y se detiene.
 
 Las funciones cacheadas no dibujan elementos de Streamlit (lo harían en cada acierto de caché); el
 resultado de la comprobación queda en `_STATUS` y `app.py` muestra el aviso una vez por sesión.
 
-Variables de entorno del tablero: `INFORME_DB_PATH`, `INFORME_DATA_DIR`, `INFORME_GITHUB_REPO`,
-`INFORME_RELEASE_URL`.
+Variables de entorno del tablero (tienen prioridad sobre `informe_regional.toml`): `INFORME_DB_PATH`,
+`INFORME_DATA_DIR`, `INFORME_UPDATE_DIR`, `INFORME_RELEASE_URL`, `INFORME_GITHUB_REPO`.
 
 ### 7.4 Tema y estilo
 
@@ -669,37 +687,67 @@ No hay suite formal; las comprobaciones usadas en el desarrollo (y recomendadas 
    Streamlit sirve páginas en blanco.
 3. Recorta lo que el visor no carga: tests, cabeceras C, `pyarrow`, `pydeck`, `altair`, extensiones Jupyter de
    Plotly, demos de Streamlit (cada página se ejecutó sin ellos para comprobarlo).
-4. Copia `dashboard/`, `.streamlit/`, la base actual de `data/dist/` y crea `abrir.py` (elige el primer
-   puerto libre desde 8765) y los archivos `Abrir Informe Regional.bat` y `LEEME.txt`.
+4. Copia `dashboard/`, `.streamlit/`, la base actual de `data/dist/`, el manual de usuario en Word, y
+   crea `abrir.py` (elige el primer puerto libre desde 8765), `app/informe_regional.toml` (sección
+   `[tablero]`, editable con el Bloc de notas), `Abrir Informe Regional.bat` y `LEEME.txt`.
 
 ```
 InformeRegional/
   Abrir Informe Regional.bat
   LEEME.txt
+  Manual de usuario.docx
   python/                        intérprete + paquetes
   app/
     abrir.py
+    informe_regional.toml        carpeta compartida y URL de actualización
     .streamlit/config.toml
     dashboard/
     data/informe_regional_visor.duckdb
     data/actualizacion/          carpeta de actualización manual
 ```
 
-Solo hace falta un zip nuevo cuando cambia el **código** del tablero; los datos llegan solos. Se
-entrega el zip; el usuario lo descomprime y hace doble clic. No requiere administrador, no
-modifica el registro ni instala nada.
+Solo hace falta un zip nuevo cuando cambia el **código** del tablero; los datos llegan solos. No
+requiere administrador, no modifica el registro ni instala nada.
 
-### 8.2 Actualización de datos: protocolo
+### 8.2 Publicación en SharePoint
+
+Estructura recomendada en el sitio de SharePoint de la entidad:
 
 ```
-operador                          GitHub (release "latest")          tablero del usuario
+Informe Regional/
+  Tablero/     InformeRegional_<versión>.zip, MANUAL_USUARIO.docx
+  Datos/       informe_regional_visor.duckdb + manifest.json   (los deja publicar_datos.py cada mes)
+```
+
+1. **Antes de distribuir**, abrir `app\informe_regional.toml` del paquete y escribir en
+   `carpeta_actualizacion` la ruta local con la que OneDrive sincroniza `Datos/` en los equipos de los
+   usuarios (por ejemplo `C:/Users/<usuario>/<Entidad>/Informe Regional - Datos`; se admiten `~` y
+   variables como `%OneDrive%`). Si la entidad no usa GitHub, dejar `url_actualizacion = ""`. Volver a
+   comprimir la carpeta `InformeRegional` o regenerar el zip con `build_portable.py` después de cambiar
+   la plantilla `CONFIG`.
+2. Subir el zip y el manual a `Tablero/`. Los usuarios lo descargan, lo descomprimen en una carpeta
+   local (no en OneDrive ni en una unidad de red) y abren el `.bat`.
+3. En el equipo del operador, `informe_regional.toml` → `[publicacion] carpeta` apunta a su copia
+   sincronizada de `Datos/`. Cada mes `Actualizar datos.bat` deja ahí la base nueva y todos los tableros
+   la instalan al abrirse.
+4. **Primer arranque en un equipo de la entidad:** Windows marca los archivos descargados (SmartScreen:
+   "Más información → Ejecutar de todas formas"). Si la política de la entidad bloquea `.bat` o
+   ejecutables sin firma, pedir a TI que permita la carpeta `InformeRegional` (es Python oficial de
+   python.org sin modificar; no requiere administrador). Probar en un equipo de la entidad antes de
+   anunciarlo.
+
+### 8.3 Actualización de datos: protocolo
+
+```
+operador                                  canal                              tablero del usuario
 pipeline/exportar ──► manifest.json {version, archivo, sha256, bytes, generado}
-tools/publicar_datos ──► datos-<versión>: base + manifest ──► al abrir: GET manifest.json
-                                                              versión > local ? GET base, SHA-256, instalar
+tools/publicar_datos ──► carpeta compartida (SharePoint/OneDrive) ──► al abrir: ¿versión mayor? copiar, verificar, instalar
+                    └──► release GitHub datos-<versión>           ──► al abrir: GET manifest; ¿mayor? GET base, SHA-256, instalar
 ```
 
-Si la red corporativa bloquea GitHub, se puede servir el mismo par de archivos desde cualquier URL
-(`INFORME_RELEASE_URL`) o usar la carpeta `actualizacion/` (USB, correo, SharePoint).
+La versión es `AAAA.MM.DD-HHMM`, así que "mayor" equivale a "más reciente". Cualquier servidor web
+que sirva los dos archivos en una URL fija sirve como canal B (`url_actualizacion`); la carpeta
+`actualizacion/` del propio tablero queda como último recurso (USB, correo).
 
 ---
 
@@ -728,19 +776,48 @@ de calidad que falla. Cada ficha de la sección 5 indica la constante o función
 Después: `python -m pipeline.runner --monthly` (o solo el scraper: `python -c "import
 scrapers.<x> as s; s.run()"`) y `python -m pipeline.runner --transform-only`.
 
-### 9.3 Reproducir el sistema en otro escenario
+### 9.3 Paquete de entrega e instalación desde el código fuente
+
+El equipo de soporte recibe el sistema como paquete, no como acceso a un repositorio.
+`tools/build_entrega.py` (tras `build_docs.py` y `build_portable.py`, con todo confirmado en git)
+genera `dist/Entrega_<fecha>/`:
+
+| Archivo | Contenido |
+|---|---|
+| `codigo_fuente_<fecha>_<commit>.zip` | El repositorio en ese commit (`git archive`): código, documentación, plantilla de configuración. Sin datos, sin `informe_regional.toml`, sin la maqueta del cliente |
+| `InformeRegional_<versión>.zip` | Tablero portable para los usuarios |
+| `MANUAL_USUARIO.*`, `MANUAL_TECNICO.*` | Manuales en Word y Markdown |
+| `datos_historicos_parquet_<fecha>.zip` | `data/parquet/`: todo lo descargado hasta la fecha. **Conservarlo**: las fotos mensuales de BDUA, REPS y Supersalud no se pueden volver a descargar; el resto se regenera |
+| `LEEME_ENTREGA.txt` | Contenido y primeros pasos |
+
+**Instalación desde el zip de código** (sin git):
+
+1. Descomprimir `codigo_fuente_*.zip`; descomprimir `datos_historicos_parquet_*.zip` dentro, en
+   `data\parquet\`.
+2. Python 3.12 + Chrome; `Preparar equipo.bat`.
+3. `informe_regional.example.toml` → `informe_regional.toml`; fijar `[publicacion] carpeta` (y/o `repo`).
+4. `python -m pipeline.runner --transform-only` reconstruye la base desde los parquet;
+   `streamlit run dashboard\app.py` la muestra. A partir de ahí, el ciclo mensual (sección 4).
+
+**Llevar el código al repositorio de la entidad** (GitHub, GitLab, Azure DevOps): descomprimir el zip
+en un repositorio nuevo y confirmar. Si se publican los datos por release de GitHub, cambiar
+`[publicacion] repo` en el operador y `url_actualizacion` en la plantilla `CONFIG` de
+`build_portable.py` (y en el `app\informe_regional.toml` de los tableros ya entregados). Si se publica
+por SharePoint, no hay nada que cambiar en el código.
+
+### 9.4 Reproducir el sistema en otro escenario
 
 - **Otra entidad u otro conjunto de indicadores:** cambiar `registry.py` (indicadores, módulos,
   colores, fuentes) y las vistas; el resto no depende de la FCT.
 - **Otro territorio o país:** el maestro geográfico sale de la fuente demográfica
   (`geo_normalize._build_geo_maestro`); los mapas, de `build_geojson.py`; los alias de nombres, de
   `DEPT_ALIASES`/`MUN_ALIASES`. Los scrapers son específicos de cada fuente y se reemplazan.
-- **Otro canal de publicación:** `publicar_datos.py` y `INFORME_RELEASE_URL`; el protocolo solo necesita
-  un `manifest.json` y el archivo en una URL fija.
+- **Otro canal de publicación:** `publicar_datos.py` y `[tablero] url_actualizacion`; el protocolo solo
+  necesita un `manifest.json` y el archivo en una URL fija o en una carpeta compartida.
 - **Servidor en lugar de portable:** el tablero corre con `streamlit run dashboard/app.py` en cualquier
   equipo con `requirements.txt`; `INFORME_DB_PATH` fija la base.
 
-### 9.4 Dependencias
+### 9.5 Dependencias
 
 Las versiones están fijadas en `requirements.txt` (visor) y `requirements-pipeline.txt`. Para
 actualizar: cambiar la versión, `pip install -r requirements-pipeline.txt`, reconstruir
@@ -748,7 +825,7 @@ actualizar: cambiar la versión, `pip install -r requirements-pipeline.txt`, rec
 regenerar el zip. `duckdb` debe ser la misma versión en ambos archivos (la base la escribe el
 pipeline y la lee el visor).
 
-### 9.5 Datos personales y seguridad
+### 9.6 Datos personales y seguridad
 
 - Ninguna tabla guarda personas: SIVIGILA se agrega por municipio y semana; Supersalud descarta
   representante legal, cédula, correo y teléfono; BDUA llega agregada por el servidor.
@@ -776,7 +853,7 @@ pipeline y la lee el visor).
 | `publicar` falla con `.wal` | Transform cerró mal | Repetir `--transform-only` |
 | `publicar` falla por archivo en uso | Un Streamlit abierto sobre la base del operador | Cerrarlo y repetir `--transform-only` |
 | `publicar_datos.py`: falta `gh` o permiso | GitHub CLI no instalada o sin sesión | Instalarla y `gh auth login` |
-| Un tablero no se actualiza | Sin internet o GitHub bloqueado | Actualización manual (8.2) |
+| Un tablero no se actualiza | Carpeta compartida sin sincronizar, sin internet o URL bloqueada | Ver el tooltip de la barra lateral; revisar `app\informe_regional.toml`; actualización manual (8.3) |
 | Portable: páginas en blanco | Versiones de Starlette/Uvicorn distintas de las probadas | Regenerar con `build_portable.py` (usa las versiones del `.venv`) |
 | Portable: el navegador abre otra aplicación | Otro programa usa el puerto | `abrir.py` ya elige un puerto libre; copiar la URL de la ventana negra |
 
@@ -790,3 +867,4 @@ pipeline y la lee el visor).
 - `docs/PLAN_FCT_2026-10.md` — plan del diseño FCT.
 - `docs/AUDITORIA_2026-10-13.md` — auditoría del código.
 - `tools/build_docs.py` — genera las versiones Word de los manuales.
+- `tools/build_entrega.py` — arma el paquete de entrega.

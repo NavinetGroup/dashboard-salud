@@ -1,16 +1,37 @@
-# Configuración local del equipo que procesa los datos.
-# Copie este archivo como informe_regional.toml (no se sube a git) y ajuste lo necesario.
-# Cada valor también se puede fijar con una variable de entorno, que tiene prioridad.
+# Configuración local. Copie este archivo como informe_regional.toml (no se sube a git)
+# y ajuste lo necesario. Cada valor también se puede fijar con una variable de entorno,
+# que tiene prioridad sobre el archivo.
+#
+# - En el equipo que procesa los datos se usan las secciones [rutas] y [publicacion].
+# - El tablero (incluida la versión portable, donde el archivo está en app\) usa [tablero].
 
 [rutas]
 # Carpeta de archivos descargados a mano (CSV de IRCA desde SIVICAP, ZIP de afiliación).
 # Dentro se usan las subcarpetas irca/ y afiliacion/; lo ya cargado pasa a procesados/.
-# Hoy: carpeta del proyecto. Más adelante: la biblioteca de SharePoint sincronizada con
-# OneDrive, por ejemplo  manuales = "~/Supersalud/Informe Regional - Archivos"
+# Puede ser una biblioteca de SharePoint sincronizada con OneDrive, por ejemplo
+#   manuales = "~/Supersalud/Informe Regional - Archivos"
 # Variable de entorno: INFORME_MANUAL_DIR
 manuales = "data/manual"
 
 [publicacion]
-# Repositorio de GitHub donde se publica cada mes la base de datos del visor.
+# Dónde deja cada mes la base del visor el comando "Actualizar datos.bat". Se puede usar
+# uno de los dos canales o los dos.
+#
+# Carpeta compartida (biblioteca de SharePoint sincronizada con OneDrive, unidad de red):
+# todos los tableros configurados con la misma carpeta toman la base nueva al abrirse.
+# Variable de entorno: INFORME_PUBLICACION_DIR
+carpeta = ""
+# Repositorio de GitHub (release pública "datos-<versión>"); "" para no publicar ahí.
 # Variable de entorno: INFORME_GITHUB_REPO
 repo = "NavinetGroup/dashboard-salud"
+
+[tablero]
+# Carpeta compartida donde aparece la base mensual (la misma de [publicacion] carpeta, vista
+# desde el equipo del usuario), por ejemplo
+#   carpeta_actualizacion = "C:/Users/<usuario>/Supersalud/Informe Regional - Datos"
+# Variable de entorno: INFORME_UPDATE_DIR
+carpeta_actualizacion = ""
+# URL base donde están manifest.json y la base (una release de GitHub, un servidor web);
+# "" para no buscar en internet.
+# Variable de entorno: INFORME_RELEASE_URL
+url_actualizacion = "https://github.com/NavinetGroup/dashboard-salud/releases/latest/download"

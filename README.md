@@ -12,8 +12,8 @@ Equipo de procesamiento (operador)                 Usuarios
 scrapers/  → descargan las fuentes                 Abrir Informe Regional.bat
 pipeline/  → transforman, calculan y controlan     (versión portable, sin instalar nada)
              la calidad
-pipeline/exportar.py → base del visor (~14 MB)  ─►  release de GitHub  ─►  el tablero la descarga
-tools/publicar_datos.py                                                     solo al abrirse
+pipeline/exportar.py → base del visor (~14 MB)  ─►  carpeta SharePoint  ─►  el tablero la toma
+tools/publicar_datos.py                          y/o release de GitHub      solo al abrirse
 ```
 
 - **Los datos se procesan solo en el equipo del operador.** El repositorio no trae datos: se generan
@@ -32,9 +32,10 @@ tools/publicar_datos.py                                                     solo
 
 | Cuándo | Qué |
 |---|---|
-| Una vez | `Preparar equipo.bat`, `gh auth login`, `Renovar sesion SIVICAP.bat` |
+| Una vez | `Preparar equipo.bat`, `informe_regional.toml` (carpeta SharePoint y/o repositorio de publicación), `Renovar sesion SIVICAP.bat` |
 | Cada mes | `Actualizar datos.bat` (procesa, controla y ofrece publicar) |
 | Cuando cambia el código del tablero | `.venv\Scripts\python.exe tools\build_portable.py` y entregar el zip nuevo |
+| Entrega a quien administre el sistema | `tools\build_docs.py`, `tools\build_portable.py`, `tools\build_entrega.py` → `dist\Entrega_<fecha>\` |
 
 ## Documentación
 
@@ -53,9 +54,9 @@ Los `.docx` se generan desde los `.md` con `.venv\Scripts\python.exe tools\build
 dashboard/        tablero (Streamlit): app.py, vistas por módulo, componentes y mapas DANE
 pipeline/         transform → métricas → controles de calidad → publicar → exportar (runner.py)
 scrapers/         una descarga por fuente; settings.py lee informe_regional.toml
-tools/            publicar_datos.py, build_portable.py, build_geojson.py, build_docs.py, setup_sivicap_session.py
+tools/            publicar_datos.py, build_portable.py, build_entrega.py, build_geojson.py, build_docs.py, setup_sivicap_session.py
 docs/             manuales (usuario y técnico), fórmulas de Financiamiento, investigación de fuentes, auditoría
 requirements.txt            paquetes del visor
 requirements-pipeline.txt   paquetes del procesamiento (incluye los del visor)
-informe_regional.example.toml   plantilla de configuración local (carpeta de archivos manuales)
+informe_regional.example.toml   plantilla de configuración local (manuales, canal de publicación, actualización del tablero)
 ```

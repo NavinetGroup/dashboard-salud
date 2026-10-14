@@ -75,6 +75,21 @@ from streamlit.web import cli
 sys.exit(cli.main())
 '''
 
+# Viewer configuration shipped in app/: the shared-folder channel is empty until
+# the organisation fills it in; the URL channel points at the public release.
+CONFIG = '''# Configuración del tablero. Edite con el Bloc de notas y vuelva a abrir el tablero.
+# Las variables de entorno INFORME_UPDATE_DIR e INFORME_RELEASE_URL tienen prioridad.
+
+[tablero]
+# Carpeta compartida (biblioteca de SharePoint sincronizada con OneDrive o unidad de red)
+# donde el operador deja cada mes la base informe_regional_visor.duckdb. Use barras "/".
+# Ejemplo:  carpeta_actualizacion = "C:/Users/<usuario>/Supersalud/Informe Regional - Datos"
+carpeta_actualizacion = ""
+
+# URL donde se publica la base (manifest.json + archivo). "" para no buscar en internet.
+url_actualizacion = "https://github.com/NavinetGroup/dashboard-salud/releases/latest/download"
+'''
+
 README = '''INFORME REGIONAL DE SALUD — Supersalud
 =====================================
 
@@ -84,11 +99,12 @@ ABRIR
   lo usa; ciérrela para salir. No requiere instalación ni permisos de administrador.
 
 DATOS
-  - Actualización automática: al abrir, si hay internet, el tablero descarga
-    la versión mensual más reciente publicada. La versión aparece en la barra
-    lateral ("Datos: versión ...").
-  - Sin internet: siga usando la versión que tiene. Para actualizar a mano,
-    copie el archivo informe_regional_visor.duckdb que le compartan en
+  - Actualización automática: al abrir, el tablero busca la versión mensual más
+    reciente en la carpeta compartida configurada en app\\informe_regional.toml
+    (SharePoint sincronizado con OneDrive) y en internet, y la instala. La
+    versión aparece en la barra lateral ("Datos: versión ...").
+  - Sin acceso a esas fuentes: siga usando la versión que tiene. Para actualizar
+    a mano, copie el archivo informe_regional_visor.duckdb que le compartan en
     app\\data\\actualizacion\\ y vuelva a abrir el tablero.
 
 AYUDA
@@ -167,6 +183,7 @@ def main() -> int:
                     ignore=shutil.ignore_patterns('__pycache__', '*.pyc'))
     shutil.copytree(ROOT / '.streamlit', app_dir / '.streamlit')
     (app_dir / 'data' / 'actualizacion').mkdir(parents=True)
+    (app_dir / 'informe_regional.toml').write_text(CONFIG, encoding='utf-8')
     shutil.copy2(ROOT / 'data' / 'dist' / 'informe_regional_visor.duckdb', app_dir / 'data')
     (OUT / 'Abrir Informe Regional.bat').write_text(LAUNCHER.replace('\n', '\r\n'), encoding='cp1252')
     (app_dir / 'abrir.py').write_text(OPENER, encoding='utf-8')

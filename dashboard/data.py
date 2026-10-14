@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import shutil
+import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -18,20 +19,46 @@ import streamlit as st
 #    operator always sees the build they just made.
 # 3. The viewer (everyone else): data/informe_regional_visor.duckdb, kept up to
 #    date on start-up by
-#      B  automatic: the manifest of the latest GitHub release says which
-#         version is published; a newer one is downloaded, its SHA-256 checked,
-#         and swapped in atomically;
-#      A  manual fallback: a newer viewer database dropped in data/actualizacion/
-#         (copied from a USB stick, an email, SharePoint…) is installed the same way.
-#    Without internet the current copy keeps working.
+#      A  a newer viewer database in data/actualizacion/ (copied by hand from a
+#         USB stick, an email…) or in the shared folder set in the configuration
+#         (a SharePoint library synced with OneDrive, a network drive) is
+#         installed: copied, verified and swapped in atomically;
+#      B  the manifest at the configured URL (a GitHub release by default) says
+#         which version is published; a newer one is downloaded, its SHA-256
+#         checked, and swapped in the same way.
+#    Without internet or without the shared folder the current copy keeps working.
+#
+# Configuration: informe_regional.toml next to the app (app/ in the portable
+# bundle, the repository root otherwise), section [tablero]; environment
+# variables win over the file.
+#   url_actualizacion      INFORME_RELEASE_URL   base URL with manifest.json ('' = off)
+#   carpeta_actualizacion  INFORME_UPDATE_DIR    shared folder with the monthly file
 _APP_ROOT = Path(__file__).parent.parent
 _DATA_DIR = Path(os.environ.get('INFORME_DATA_DIR', str(_APP_ROOT / 'data')))
 _PIPELINE_DB = _APP_ROOT / 'data' / 'informe_regional.duckdb'
 VIEWER_DB = _DATA_DIR / 'informe_regional_visor.duckdb'
 DROP_DIR = _DATA_DIR / 'actualizacion'
+
+
+def _config() -> dict:
+    try:
+        return tomllib.loads((_APP_ROOT / 'informe_regional.toml').read_text(encoding='utf-8')).get('tablero', {})
+    except FileNotFoundError:
+        return {}
+    except Exception as e:   # a typo in the file must not take the app down
+        return {'_error': str(e)}
+
+
+def _setting(env: str, key: str, default: str) -> str:
+    value = os.environ.get(env)
+    return value if value is not None else str(_config().get(key, default))
+
+
 GITHUB_REPO = os.environ.get('INFORME_GITHUB_REPO', 'NavinetGroup/dashboard-salud')
-RELEASE_URL = os.environ.get('INFORME_RELEASE_URL',
-                             f'https://github.com/{GITHUB_REPO}/releases/latest/download')
+RELEASE_URL = _setting('INFORME_RELEASE_URL', 'url_actualizacion',
+                       f'https://github.com/{GITHUB_REPO}/releases/latest/download').rstrip('/')
+_shared = _setting('INFORME_UPDATE_DIR', 'carpeta_actualizacion', '')
+SHARED_DIR = Path(os.path.expandvars(os.path.expanduser(_shared))) if _shared else None
 # DANE Marco Geoestadístico Nacional, simplified (tools/build_geojson.py)
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
 GEOJSON_MPIOS_PATH = Path(__file__).parent / 'colombia_mpios.geojson'
@@ -61,24 +88,31 @@ def _install(candidate: Path) -> bool:
     return True
 
 
-def _from_drop_folder() -> str:
-    """A: newest valid database dropped in data/actualizacion/ ('' if none newer).
-    A dropped file that is valid but not newer is deleted (it would be re-checked
-    on every start); anything that is not a viewer database is left alone."""
-    if not DROP_DIR.exists():
+def _from_folder(folder: Path, consume: bool) -> str:
+    """A: newest valid viewer database in a folder ('' if none newer than ours).
+    consume=True (data/actualizacion/, the user's own drop folder): a file that is
+    a viewer database is deleted once looked at, newer or not, so it is not
+    re-checked on every start. consume=False (the shared folder, used by every
+    tableau): files are only read. Anything that is not a viewer database is
+    left alone."""
+    if not folder.is_dir():
         return ''
     staged = VIEWER_DB.with_name(VIEWER_DB.name + '.part')
-    for f in sorted(DROP_DIR.glob('*.duckdb'), key=_db_version, reverse=True):
+    current = _db_version(VIEWER_DB)
+    for f in sorted(folder.glob('*.duckdb'), key=_db_version, reverse=True):
         version = _db_version(f)
         if not version:
             continue
-        try:
-            staged.unlink(missing_ok=True)
-            shutil.copyfile(f, staged)
-            installed = _install(staged)
-        finally:
-            staged.unlink(missing_ok=True)
-        f.unlink(missing_ok=True)
+        installed = False
+        if version > current:
+            try:
+                staged.unlink(missing_ok=True)
+                shutil.copyfile(f, staged)
+                installed = _install(staged)
+            finally:
+                staged.unlink(missing_ok=True)
+        if consume:
+            f.unlink(missing_ok=True)
         if installed:
             return version
     return ''
@@ -123,17 +157,26 @@ def _ensure_db() -> str:
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
     DROP_DIR.mkdir(exist_ok=True)
     updated, problems = '', []
-    # Neither source may take the app down: offline, GitHub unreachable, a bad
-    # or half-copied file, or the current database locked by another window all
-    # leave the current copy in place and are reported in the sidebar.
+    if '_error' in _config():
+        problems.append(f"informe_regional.toml: {_config()['_error']}")
+    # No source may take the app down: offline, the URL unreachable, the shared
+    # folder not synced, a bad or half-copied file, or the current database
+    # locked by another window all leave the current copy in place and are
+    # reported in the sidebar.
     try:
-        updated = _from_drop_folder()
+        updated = _from_folder(DROP_DIR, consume=True)
     except Exception as e:
         problems.append(f'carpeta de actualización: {e}')
-    try:
-        updated = _from_release() or updated
-    except Exception as e:
-        problems.append(f'descarga: {e}')
+    if SHARED_DIR is not None:
+        try:
+            updated = _from_folder(SHARED_DIR, consume=False) or updated
+        except Exception as e:
+            problems.append(f'carpeta compartida: {e}')
+    if RELEASE_URL:
+        try:
+            updated = _from_release() or updated
+        except Exception as e:
+            problems.append(f'descarga: {e}')
     _STATUS.update(updated=updated, problems='; '.join(problems))
     if updated:
         st.cache_data.clear()

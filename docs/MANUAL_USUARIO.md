@@ -199,16 +199,25 @@ el INS la suministren, sus tarjetas aparecen en gris:
 
 ## 8. Actualización de los datos
 
-Los datos se procesan y publican una vez al mes. El tablero se actualiza solo:
+Los datos se procesan y publican una vez al mes. El tablero se actualiza solo al abrirse (y cada 6
+horas si queda abierto), por dos vías:
 
-- **Con internet:** al abrirse, busca la última versión publicada; si es más nueva que la suya, la
-  descarga (unos 14 MB), la verifica y la instala. Aparece un aviso "Datos actualizados a la versión …"
-  y la versión nueva en la barra lateral.
-- **Sin internet:** sigue mostrando la versión que tiene. En la barra lateral aparece "No se pudo
-  comprobar si hay datos más recientes".
-- **Actualización manual:** si le comparten el archivo `informe_regional_visor.duckdb` (por correo,
-  USB o SharePoint), cópielo en la carpeta `InformeRegional\app\data\actualizacion\` y vuelva a abrir el
-  tablero. El archivo se instala y desaparece de esa carpeta.
+- **Carpeta compartida (SharePoint).** El equipo que procesa los datos deja la base nueva en una
+  biblioteca de SharePoint. Si esa biblioteca está sincronizada en su equipo con OneDrive y la ruta
+  está escrita en `InformeRegional\app\informe_regional.toml` (`carpeta_actualizacion`), el tablero la
+  toma de ahí. Quien le entregó el tablero normalmente ya dejó esa ruta configurada; si no, ábrala con
+  el Bloc de notas y escriba la ruta de la carpeta sincronizada, con barras `/`.
+- **Internet.** Busca la última versión publicada en la dirección configurada (`url_actualizacion`);
+  si es más nueva que la suya, la descarga (unos 14 MB), la verifica y la instala.
+
+En ambos casos aparece el aviso "Datos actualizados a la versión …" y la versión nueva en la barra
+lateral. Si ninguna de las dos vías está disponible (sin red, carpeta sin sincronizar), sigue
+mostrando la versión que tiene y la barra lateral indica "No se pudo comprobar si hay datos más
+recientes".
+
+**Actualización manual:** si le comparten el archivo `informe_regional_visor.duckdb` (por correo o
+USB), cópielo en la carpeta `InformeRegional\app\data\actualizacion\` y vuelva a abrir el tablero. El
+archivo se instala y desaparece de esa carpeta.
 
 El tablero nunca retrocede a una versión anterior ni instala un archivo dañado.
 
