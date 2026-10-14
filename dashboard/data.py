@@ -21,7 +21,9 @@ DB_URL = os.environ.get(
 # Optional: the SHA-256 published with the release; when set, a download that
 # doesn't match is rejected instead of being served.
 DB_SHA256 = os.environ.get('DB_SHA256', '').strip().lower()
+# DANE Marco Geoestadístico Nacional, simplified (tools/build_geojson.py)
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
+GEOJSON_MPIOS_PATH = Path(__file__).parent / 'colombia_mpios.geojson'
 
 
 def _download_db() -> None:
@@ -63,19 +65,6 @@ def _ensure_db() -> str:
 def _connect() -> duckdb.DuckDBPyConnection:
     return duckdb.connect(_ensure_db(), read_only=True)
 
-# ISO 3166-2 -> DANE department code (integer)
-ISO_TO_DANE: dict[str, int] = {
-    'CO-AMA': 91, 'CO-ANT':  5, 'CO-ARA': 81, 'CO-ATL':  8,
-    'CO-BOL': 13, 'CO-BOY': 15, 'CO-CAL': 17, 'CO-CAQ': 18,
-    'CO-CAS': 85, 'CO-CAU': 19, 'CO-CES': 20, 'CO-CHO': 27,
-    'CO-COR': 23, 'CO-CUN': 25, 'CO-DC':  11, 'CO-GUA': 94,
-    'CO-GUV': 95, 'CO-HUI': 41, 'CO-LAG': 44, 'CO-MAG': 47,
-    'CO-MET': 50, 'CO-NAR': 52, 'CO-NSA': 54, 'CO-PUT': 86,
-    'CO-QUI': 63, 'CO-RIS': 66, 'CO-SAN': 68, 'CO-SAP': 88,
-    'CO-SUC': 70, 'CO-TOL': 73, 'CO-VAC': 76, 'CO-VAU': 97,
-    'CO-VID': 99,
-}
-
 _MES_ORDER = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4,
     'MAYO': 5, 'JUNIO': 6, 'JULIO': 7, 'AGOSTO': 8,
@@ -109,15 +98,50 @@ _MES_CASE = """CASE UPPER(TRIM(mes))
 
 @st.cache_data(ttl=3600)
 def load_geojson() -> dict:
+    """Departments; feature id and properties.DPTO = 2-digit DANE code."""
     with open(GEOJSON_PATH, encoding='utf-8') as f:
-        g = json.load(f)
-    for feat in g['features']:
-        iso = feat['properties'].get('shapeISO', '')
-        dane = ISO_TO_DANE.get(iso)
-        if dane is not None:
-            feat['properties']['DPTO'] = str(dane).zfill(2)
-            feat['id'] = str(dane).zfill(2)
-    return g
+        return json.load(f)
+
+
+@st.cache_data(ttl=3600)
+def _mpios_all() -> list[dict]:
+    with open(GEOJSON_MPIOS_PATH, encoding='utf-8') as f:
+        feats = json.load(f)['features']
+    for x in feats:   # bounding box, for the neighbours map
+        xs, ys = [], []
+
+        def walk(c):
+            if c and isinstance(c[0], (int, float)):
+                xs.append(c[0]); ys.append(c[1])
+            else:
+                for y in c:
+                    walk(y)
+        walk(x['geometry']['coordinates'])
+        x['bbox'] = [min(xs), min(ys), max(xs), max(ys)]
+    return feats
+
+
+def load_geojson_mpios(dep_code: int) -> dict:
+    """One department's municipalities; feature id and properties.MPIO = 5-digit
+    DIVIPOLA code (Bogotá: its single polygon)."""
+    dep = str(int(dep_code)).zfill(2)
+    return {'type': 'FeatureCollection',
+            'features': [x for x in _mpios_all() if x['properties']['DPTO'] == dep]}
+
+
+def load_geojson_vecinos(mun_code: int, margin: float = 0.02) -> dict:
+    """The municipality and those around it, across department lines: every
+    municipality whose bounding box overlaps its own (slightly enlarged). A
+    superset of strict adjacency, labelled 'y alrededores'."""
+    feats = _mpios_all()
+    me = next((x for x in feats if x['id'] == str(int(mun_code)).zfill(5)), None)
+    if me is None:
+        return {'type': 'FeatureCollection', 'features': []}
+    x0, y0, x1, y1 = me['bbox']
+    x0, y0, x1, y1 = x0 - margin, y0 - margin, x1 + margin, y1 + margin
+    return {'type': 'FeatureCollection', 'features': [
+        x for x in feats
+        if x['bbox'][0] <= x1 and x['bbox'][2] >= x0 and x['bbox'][1] <= y1 and x['bbox'][3] >= y0]}
 
 
 # ---------------------------------------------------------------------------

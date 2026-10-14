@@ -140,6 +140,16 @@ gh release upload data-v1 data/informe_regional.duckdb --repo NavinetGroup/dashb
 
 ---
 
+## 🗺️ Cartografía (mapas de Localización)
+
+Los mapas usan `dashboard/colombia_dptos.geojson` y `dashboard/colombia_mpios.geojson`, generados a partir del Marco Geoestadístico Nacional del DANE (servicio público, sin login). No los actualiza el pipeline. Cuando el DANE publique un MGN nuevo (por ejemplo, porque se creó un municipio):
+
+```bash
+python tools/build_geojson.py --year 2026
+```
+
+Los mapas se dibujan sin fondo de teselas, así que no dependen de ningún servidor externo ni de una API key, y funcionan sin conexión.
+
 ## 🆘 Troubleshooting
 
 | Síntoma | Causa probable | Acción |

@@ -30,7 +30,7 @@ Common elements: Supersalud branding, icon-led KPI cards, a source/period footer
 |---|---|---|
 | Men / women / total | ✅ | DANE projections |
 | Population with ethnic identification + by group | ✅ | `pob_etnico_total − pob_ninguno`; shares per group |
-| Localización maps (country → department → municipality, neighbours) | 🔵 | Only department polygons exist; needs the DANE MGN municipal geometry (simplified) |
+| Localización maps (country → department → municipality, neighbours) | ✅ | DANE MGN 2025, simplified (tools/build_geojson.py); plain polygon maps, no tile server |
 
 ### Salud Pública (11)
 | # | Indicator | Status | Notes |

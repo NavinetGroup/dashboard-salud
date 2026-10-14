@@ -31,9 +31,9 @@ def _is_null(v) -> bool:
     except (TypeError, ValueError):
         return False
 
-_MAPBOX_STYLE = 'carto-positron'
-_MAP_CENTER = {'lat': 4.0, 'lon': -74.0}
-_MAP_ZOOM = 4.3
+# Maps draw the DANE polygons on a plain background (plotly geo, fitted to the
+# shapes): no tile server, so no API key and they work offline.
+_GEO = dict(fitbounds='locations', visible=False, bgcolor='rgba(0,0,0,0)', projection_type='mercator')
 
 _ETHNIC_COLS = [
     ('pob_indigena',     'Indígena'),
@@ -134,23 +134,13 @@ def gauge_pct(value: float | None, title: str = 'Cobertura') -> go.Figure:
 def choropleth_dept(df: pd.DataFrame, metric: str, geojson: dict,
                     label: str = '', unit: str = '') -> go.Figure:
     title_txt = f'{label} ({unit})' if unit else label
-    fig = px.choropleth_mapbox(
-        df,
-        geojson=geojson,
-        locations='dep_str',
-        featureidkey='properties.DPTO',
-        color=metric,
-        color_continuous_scale='Blues',
-        mapbox_style=_MAPBOX_STYLE,
-        zoom=_MAP_ZOOM,
-        center=_MAP_CENTER,
-        opacity=0.75,
-        hover_name='departamento',
-        hover_data={metric: True, 'dep_str': False},
-        labels={metric: label or metric},
-        title=title_txt,
-        height=500,
-    )
+    fig = px.choropleth(
+        df, geojson=geojson, locations='dep_str', featureidkey='properties.DPTO',
+        color=metric, color_continuous_scale='Blues', hover_name='departamento',
+        hover_data={metric: True, 'dep_str': False}, labels={metric: label or metric},
+        title=title_txt, height=500)
+    fig.update_traces(marker_line_width=0.6, marker_line_color='white')
+    fig.update_geos(**_GEO)
     fig.update_layout(margin={'r': 0, 't': 40, 'l': 0, 'b': 0},
                       coloraxis_colorbar={'title': unit or ''})
     return fig
@@ -367,13 +357,32 @@ def map_location(df_dept: pd.DataFrame, geojson: dict, dep_str: str,
     """Colombia with the selected department highlighted (Localización territorial)."""
     d = df_dept[['departamento', 'dep_str']].copy()
     d['sel'] = (d['dep_str'] == dep_str).astype(int)
-    fig = go.Figure(go.Choroplethmapbox(
+    fig = go.Figure(go.Choropleth(
         geojson=geojson, locations=d['dep_str'], z=d['sel'], featureidkey='properties.DPTO',
         colorscale=[[0, '#D7EDEA'], [1, color]], zmin=0, zmax=1, showscale=False,
         marker_line_width=0.6, marker_line_color='white',
         text=d['departamento'], hovertemplate='%{text}<extra></extra>'))
-    fig.update_layout(mapbox_style=_MAPBOX_STYLE, mapbox_zoom=_MAP_ZOOM, mapbox_center=_MAP_CENTER,
-                      margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=420)
+    fig.update_geos(**_GEO)
+    fig.update_layout(margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=420,
+                      paper_bgcolor='rgba(0,0,0,0)')
+    return fig
+
+
+def map_municipios(geojson: dict, names: dict[str, str], mun_str: str | None,
+                   color: str = '#26A69A', height: int = 420) -> go.Figure:
+    """A department's municipalities, the selected one highlighted (Localización
+    municipal). names: 5-digit DIVIPOLA → municipality name, for the hover."""
+    ids = [f['id'] for f in geojson['features']]
+    fig = go.Figure(go.Choropleth(
+        geojson=geojson, locations=ids, z=[1 if i == mun_str else 0 for i in ids],
+        featureidkey='id', colorscale=[[0, '#D7EDEA'], [1, color]], zmin=0, zmax=1,
+        showscale=False, marker_line_width=0.5, marker_line_color='white',
+        text=[names.get(i) or f['properties'].get('nombre', i).title()
+              for i, f in zip(ids, geojson['features'])],
+        hovertemplate='%{text}<extra></extra>'))
+    fig.update_geos(**_GEO)
+    fig.update_layout(margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=height,
+                      paper_bgcolor='rgba(0,0,0,0)')
     return fig
 
 

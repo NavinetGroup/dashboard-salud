@@ -7,8 +7,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from charts import donut_gender, map_location
-from data import load_geojson
+from charts import donut_gender, map_location, map_municipios
+from data import load_geojson, load_geojson_mpios, load_geojson_vecinos
 from registry import DEMOGRAFICOS, ETNIAS, MODULES
 from ui import card_grid, footer, fmt, module_header, _v
 
@@ -28,11 +28,30 @@ module_header('demograficos', 'Caracterización poblacional del territorio — p
 card_grid('demograficos', DEMOGRAFICOS, row, sel.prev_entity)
 
 st.markdown('#### Localización territorial')
-c_map, c_info = st.columns([3, 2])
+# Drill-down (FCT): Colombia → department → municipality and its surroundings
+mun_str = str(int(sel.mun_code)).zfill(5) if sel.use_mun and sel.mun_code else None
+names = {str(int(c)).zfill(5): n for c, n in zip(sel.df_mun['geo_mun_codigo'], sel.df_mun['municipio'])} \
+    if 'geo_mun_codigo' in sel.df_mun else {}
+vecinos = load_geojson_vecinos(sel.mun_code) if mun_str else None
+if vecinos and vecinos['features']:
+    c_map, c_mun, c_vec = st.columns(3)
+else:
+    c_map, c_mun = st.columns(2)
 with c_map:
+    st.caption('Colombia')
     st.plotly_chart(map_location(sel.df_dept, load_geojson(), str(sel.dept_code).zfill(2), color),
                     use_container_width=True)
-with c_info:
+with c_mun:
+    st.caption(f'{sel.dept_name}: municipios' + (f' · {sel.mun_name} resaltado' if sel.use_mun else ''))
+    st.plotly_chart(map_municipios(load_geojson_mpios(sel.dept_code), names, mun_str, color),
+                    use_container_width=True)
+if vecinos and vecinos['features']:
+    with c_vec:
+        st.caption(f'{sel.mun_name} y alrededores')
+        st.plotly_chart(map_municipios(vecinos, names, mun_str, color), use_container_width=True)
+elif mun_str:
+    st.caption(f'{sel.mun_name}: sin polígono en la cartografía DANE MGN 2025.')
+with st.container():
     st.markdown(f'**{html.escape(" › ".join(["Colombia", sel.dept_name] + ([sel.mun_name] if sel.mun_name else [])))}**')
     if sel.use_mun:
         n_mun = len(sel.df_mun)
@@ -43,7 +62,7 @@ with c_info:
         share = (_v(row, 'pob_total') or 0) / (_v(sel.nat_row, 'pob_total') or 1) * 100
         st.markdown(f'{html.escape(sel.dept_name)} tiene **{len(sel.df_mun)} municipios** y el '
                     f'**{_pct(share)}** de la población del país.')
-    st.caption('Mapa municipal (municipio y vecinos): pendiente de la cartografía DANE MGN.')
+    st.caption('Cartografía: DANE, Marco Geoestadístico Nacional 2025 (simplificado).')
 
 c_sex, c_eth = st.columns([2, 3])
 with c_sex:
