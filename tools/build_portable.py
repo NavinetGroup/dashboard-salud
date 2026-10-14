@@ -112,11 +112,12 @@ def _trim(site: Path) -> int:
     Jupyter extension and Streamlit's unused chart back-ends. Returns the bytes removed."""
     size = lambda p: sum(f.stat().st_size for f in p.rglob('*') if f.is_file()) if p.is_dir() else p.stat().st_size
     targets = [d for d in site.rglob('*') if d.is_dir() and d.name in ('tests', 'test', '__pycache__')]
-    # Streamlit dependencies the app never imports (st.pydeck_chart, st.altair_chart
-    # and bundled demos/skills); verified by running every page without them.
-    targets += [site / 'pydeck', site / 'altair', site / 'plotly' / 'labextension',
+    # Streamlit dependencies the app never imports (pyarrow: only for Arrow
+    # dataframes; pydeck/altair: st.pydeck_chart, st.altair_chart; bundled
+    # demos/skills); verified by running every page without them.
+    targets += [site / 'pyarrow', site / 'pydeck', site / 'altair', site / 'plotly' / 'labextension',
                 site / 'streamlit' / '.agents', site / 'streamlit' / 'hello']
-    targets += [d for d in site.glob('*.dist-info') if d.name.split('-')[0] in ('pydeck', 'altair')]
+    targets += [d for d in site.glob('*.dist-info') if d.name.split('-')[0] in ('pyarrow', 'pydeck', 'altair')]
     targets += [site / 'share', site / 'numpy' / '_core' / 'include']
     targets += [f for pat in ('*.pxd', '*.pyx', '*.lib', '*.h', '*.hpp', '*.cpp', '*.pyi')
                 for f in site.rglob(pat)]
@@ -159,7 +160,7 @@ def main() -> int:
                     '-r', str(ROOT / 'requirements.txt'), '-c', str(constraints)], check=True)
 
     removed = _trim(py_dir / 'Lib' / 'site-packages')
-    print(f'  recortados {removed / 1e6:.0f} MB que el visor no usa (tests, cabeceras C, pydeck, altair, extensiones Jupyter)')
+    print(f'  recortados {removed / 1e6:.0f} MB que el visor no usa (tests, cabeceras C, pyarrow, pydeck, altair, extensiones Jupyter)')
 
     print('3/4 Aplicación y datos')
     shutil.copytree(ROOT / 'dashboard', app_dir / 'dashboard',

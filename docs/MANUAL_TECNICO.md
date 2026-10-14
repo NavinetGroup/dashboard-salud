@@ -667,7 +667,7 @@ No hay suite formal; las comprobaciones usadas en el desarrollo (y recomendadas 
 2. Instala `requirements.txt` con `pip --target`, con las dependencias fijadas a las versiones exactas del
    `.venv` (`pip freeze` como *constraints*): un Starlette o Uvicorn más nuevo que el que espera
    Streamlit sirve páginas en blanco.
-3. Recorta lo que el visor no carga: tests, cabeceras C, `pydeck`, `altair`, extensiones Jupyter de
+3. Recorta lo que el visor no carga: tests, cabeceras C, `pyarrow`, `pydeck`, `altair`, extensiones Jupyter de
    Plotly, demos de Streamlit (cada página se ejecutó sin ellos para comprobarlo).
 4. Copia `dashboard/`, `.streamlit/`, la base actual de `data/dist/` y crea `abrir.py` (elige el primer
    puerto libre desde 8765) y los archivos `Abrir Informe Regional.bat` y `LEEME.txt`.
