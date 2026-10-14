@@ -10,7 +10,7 @@ validation (docs/FINANCIAMIENTO_FORMULAS.md). 9–11 must be supplied by the cli
 import streamlit as st
 
 from registry import FINANCIAMIENTO
-from ui import footer, kpi_card, module_header, money, pending_card, _v
+from ui import footer, kpi_card, module_header, money, pending_card, progress_html, scale_html, _v
 
 sel = st.session_state['sel']
 row, prev = sel.entity_row, sel.prev_entity
@@ -48,13 +48,26 @@ def _note(ind) -> str:
     return ''
 
 
+_GAUGE = [(25, '#E53935'), (50, '#FB8C00'), (75, '#FBC02D'), (100, '#26A69A')]
+
+
+def _visual(ind) -> str:
+    v = _v(row, ind.col) if ind.col else None
+    if v is None:
+        return ''
+    if ind.key == 'fin8':      # mockup: coloured 0–100 % scale with a marker
+        return scale_html(min(float(v), 100.0), _GAUGE, ticks=['0%', '25%', '50%', '75%', '100%'])
+    return progress_html(v)    # execution ratios: bar filled to the value (capped at 100 %)
+
+
 def _grid(inds, per_row):
     for col, ind in zip(st.columns(per_row), inds):
+        num = FINANCIAMIENTO.index(ind) + 1
         with col:
             if ind.col is None:
-                pending_card('financiamiento', ind)
+                pending_card('financiamiento', ind, num)
             else:
-                kpi_card('financiamiento', ind, row, prev, _note(ind))
+                kpi_card('financiamiento', ind, row, prev, _note(ind), num=num, visual=_visual(ind))
 
 
 _grid(FINANCIAMIENTO[:3], 3)

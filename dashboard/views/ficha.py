@@ -39,14 +39,15 @@ st.markdown(f'''<style>
     box-shadow: 0 2px 10px rgba(0,0,0,.10); }}
 .fct-band .num {{ display: flex; align-items: center; gap: 10px; font-size: 30px; font-weight: 800; }}
 .fct-band .num .fct-ico {{ color: white; font-size: 30px; line-height: 30px; }}
-.fct-band .t {{ font-size: 15px; font-weight: 800; letter-spacing: .3px; line-height: 1.2; }}
+.fct-band .t {{ font-size: 13.5px; font-weight: 800; letter-spacing: 0; line-height: 1.2;
+    overflow-wrap: normal; word-break: keep-all; hyphens: none; }}
 .fct-band .s {{ font-size: 13px; opacity: .9; }}
 </style>''', unsafe_allow_html=True)
 
 for n, (module, keys) in enumerate(FICHA.items(), start=1):
     title, color, icon = MODULES[module]
     # band column fixed; the cards share the rest of the row (4 or 5 per band)
-    cols = st.columns([1.0] + [SLOTS / len(keys)] * len(keys))
+    cols = st.columns([1.15] + [SLOTS / len(keys)] * len(keys))
     with cols[0]:
         st.markdown(f'<div class="fct-band" style="background:linear-gradient(160deg,{color},{color}D9)">'
                     f'<div class="num">{n}<span class="fct-ico">{icon}</span></div>'
