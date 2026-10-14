@@ -44,6 +44,7 @@ _TRACKED = [
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
     'bdua_eps', 'bdua_piramide', 'sivigila_casos', 'cuipo_salud', 'sgp_salud', 'cofin_lma',
+    'eevv_nacimientos',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -337,6 +338,21 @@ class _Checks:
                 self.add('cofin_meta_vigente', 'error', ok,
                          f'matriz MSPS de {y} {"cargada" if ok else "no encontrada"}')
 
+    # -- 6c. births (congenital syphilis denominator) ---------------------------
+    def births(self) -> None:
+        if not self.has('v_eevv_nacimientos'):
+            return
+        # DD999 = municipality not stated; dept 01 = residence not stated
+        bad, n = self.one("""SELECT COUNT(*) FILTER (WHERE geo_mun_dane IS NULL), COUNT(*)
+                             FROM v_eevv_nacimientos WHERE codigo_mun % 1000 <> 999 AND codigo_dep <> 1""")
+        self.add('eevv_match_municipio', 'error', bad == 0, f'{bad} de {n:,} filas sin municipio DANE')
+        y, nac = self.one("SELECT anio, SUM(nacimientos) FROM eevv_nacimientos GROUP BY anio ORDER BY anio DESC LIMIT 1")
+        # DANE closes a year ~9 months later (2025 definitive: Sept 2026)
+        self.add('frescura_nacimientos', 'warn', y >= self.today.year - 2,
+                 f'último año completo {y} ({nac:,} nacimientos)')
+        self.add('nacimientos_rango', 'warn', 380_000 <= nac <= 700_000,
+                 f'{y}: {nac:,} nacimientos (esperado 380 mil – 700 mil)')
+
     # -- 7. row-count jumps vs previous load ----------------------------------
     def row_jumps(self) -> None:
         self.con.execute("""CREATE TABLE IF NOT EXISTS _carga_log (
@@ -361,7 +377,7 @@ class _Checks:
 
     def run_all(self) -> list[Result]:
         for step in (self.structure, self.duplicates, self.geo_match, self.consistency,
-                     self.ranges, self.freshness, self.financing, self.row_jumps):
+                     self.ranges, self.freshness, self.financing, self.births, self.row_jumps):
             try:
                 step()
             except Exception as e:   # a broken check must be visible, not skipped

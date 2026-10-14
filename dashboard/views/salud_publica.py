@@ -29,6 +29,9 @@ for i in range(0, len(inds), 4):
     for col, ind in zip(st.columns(4), inds[i:i + 4]):
         with col:
             row, prev, note = _pick(ind)
+            if ind.key == 'sifilis' and _v(row, 'sv_sifilis_casos') is not None:
+                n = int(_v(row, 'sv_sifilis_casos'))
+                note = ' · '.join(x for x in (f'{n:,} caso{"s" if n != 1 else ""}'.replace(',', '.'), note) if x)
             if ind.key == 'irca':
                 lvl = _v(row, 'irca_nivel_riesgo')
                 note = ' · '.join(x for x in (f'Riesgo: {lvl}' if lvl else '', note) if x)
@@ -48,4 +51,5 @@ st.markdown("""
 
 footer('Los indicadores permiten monitorear las condiciones de salud de la población y la gestión '
        'integral del riesgo. Las tasas INS son acumuladas en el año hasta el periodo indicado; la '
-       'tendencia compara con el mismo periodo del año anterior.', ['sivigila', 'sivicap', 'dane'])
+       'tendencia compara con el mismo periodo del año anterior. Sífilis congénita: denominador DANE del año, o del '
+       'último año completo publicado mientras el año está en curso.', ['sivigila', 'sivicap', 'dane', 'eevv'])

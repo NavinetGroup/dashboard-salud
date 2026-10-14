@@ -47,6 +47,7 @@ SRC = {
     'supersalud':  'Supersalud — entidades en medida especial',
     'sivicap':     'INS — SIVICAP',
     'sivigila':    'INS — SIVIGILA (microdatos anuales; boletín PDF para el año en curso)',
+    'eevv':        'DANE — Estadísticas vitales (nacimientos y defunciones fetales)',
     'cuipo':       'CGR — CUIPO (ejecución presupuestal, datos.gov.co)',
     'sicodis':     'DNP — SICODIS (asignaciones SGP)',
     'cuipo_sgp':   'CGR — CUIPO · DNP — SICODIS',
@@ -81,9 +82,11 @@ SALUD_PUBLICA = [
     Indicator('mm', 'Razón de mortalidad materna', 'razon_mortalidad_materna',
               'por 100.000 nacidos vivos', 1, 'pregnant_woman', True, source='sivigila',
               period_col='periodo_mortalidad_materna'),
-    Indicator('sifilis', 'Sífilis congénita', 'sv_sifilis_casos', 'casos', 0,
-              'child_care', True, 'abs', source='sivigila', period_col='periodo_sivigila',
-              fallback=('casos_sifilis_congenita', 'periodo_sifilis', _PDF_NOTE)),
+    # INS: casos ÷ (nacidos vivos + muertes fetales, DANE) × 1.000; the case count
+    # is shown as the card note (views/salud_publica.py)
+    Indicator('sifilis', 'Incidencia de sífilis congénita', 'sv_sifilis_tasa',
+              'por 1.000 nacidos vivos + muertes fetales', 2, 'child_care', True, 'pct',
+              source='sivigila', period_col='periodo_sivigila'),
     Indicator('dnt', 'Prevalencia de desnutrición aguda en menores de 5 años',
               'sv_desnutricion_tasa', '%', 2, 'child_friendly', True, 'pp',
               source='sivigila', period_col='periodo_sivigila',

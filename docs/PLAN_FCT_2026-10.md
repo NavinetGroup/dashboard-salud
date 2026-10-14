@@ -36,7 +36,7 @@ Common elements: Supersalud branding, icon-led KPI cards, a source/period footer
 | # | Indicator | Status | Notes |
 |---|---|---|---|
 | 1 | Maternal mortality ratio | ✅ | |
-| 2 | Congenital syphilis incidence (per 1,000 live births) | 🟡/🔵 | We have cases. The rate needs DANE births |
+| 2 | Congenital syphilis incidence (per 1,000 live births + fetal deaths) | ✅ | SIVIGILA cases ÷ DANE births + fetal deaths (mother's residence), pro-rated to weeks covered; matches INS bulletin level |
 | 3 | Acute malnutrition prevalence <5 (%) | ✅ (sparse) | Full municipal coverage after the SIVIGILA rebuild 🔵 |
 | 4 | Under-5 mortality from malnutrition | ✅ | Department and district level |
 | 5 | IRCA + risk bar | ✅ | |

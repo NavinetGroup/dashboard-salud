@@ -44,6 +44,7 @@ import scrapers.sivigila_scraper as sivigila
 import scrapers.cuipo_scraper as cuipo
 import scrapers.sicodis_scraper as sicodis
 import scrapers.cofinanciacion_scraper as cofinanciacion
+import scrapers.eevv_scraper as eevv
 import scrapers.ins_pdf_scraper as ins_pdf
 import pipeline.transform as transform
 import pipeline.quality as quality
@@ -173,6 +174,7 @@ def run_monthly() -> int:
         (cuipo.run, 'cuipo_scraper'),          # quarterly; refetches only when CGR updates
         (sicodis.run, 'sicodis_scraper'),      # SGP allocations; current year each run
         (cofinanciacion.run, 'cofinanciacion_scraper'),  # MSPS matrix + ADRES LMA, monthly
+        (eevv.run, 'eevv_scraper'),            # DANE births (syphilis denominator); new year ~once a year
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])
@@ -197,6 +199,7 @@ def run_all() -> int:
         (cuipo.run, 'cuipo_scraper'),          # quarterly; refetches only when CGR updates
         (sicodis.run, 'sicodis_scraper'),      # SGP allocations; current year each run
         (cofinanciacion.run, 'cofinanciacion_scraper'),  # MSPS matrix + ADRES LMA, monthly
+        (eevv.run, 'eevv_scraper'),            # DANE births (syphilis denominator); new year ~once a year
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])

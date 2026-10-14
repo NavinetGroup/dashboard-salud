@@ -139,17 +139,28 @@ _EPS_COLS = ('eps_total', 'eps_contributivo', 'eps_subsidiado', 'eps_fecha_corte
 # municipality. Year-to-date counts are cut at a week so they compare with the
 # INS bulletin period and with the same cut a year earlier: PE n ends at week
 # 4·n (PE XIII = week 52/53). A completed year with no bulletin cap = all weeks.
-# (event code, output prefix, denominator: 'pob' total · 'men5' under-5 · None)
+# (event code, output prefix, denominator: 'pob' total · 'men5' under-5 ·
+#  'nac' live births + fetal deaths (DANE, mother's residence) · None)
 _SV_EVENTS = (
     ('113', 'sv_desnutricion', 'men5'),
     ('112', 'sv_mort_desnutricion', 'men5'),
     ('220', 'sv_dengue_grave', 'pob'),
     ('356', 'sv_suicidio', 'pob'),
     ('875', 'sv_violencia', 'pob'),
-    ('740', 'sv_sifilis', None),           # per 1,000 births: births not loaded yet
+    ('740', 'sv_sifilis', 'nac'),
 )
-# Per-100 for prevalence (%), per-100k for the rest
-_SV_SCALE = {'sv_desnutricion': 100.0}
+# Per-100 for prevalence (%), per-1,000 births + fetal deaths for congenital
+# syphilis (INS definition), per-100k for the rest
+_SV_SCALE = {'sv_desnutricion': 100.0, 'sv_sifilis': 1000.0}
+
+
+def _nac_year(year) -> str:
+    """Births year for the syphilis denominator: the selection year when DANE has
+    its full-year figures, else the latest earlier year. In _sv_sql the births are
+    pro-rated to the weeks covered (INS divides by the births of the same period:
+    BES 40/2024, weeks 1–38 → 2,11 per 1.000; full year 2024 here → 2,32)."""
+    cap = f'anio <= {int(year)}' if year is not None else 'TRUE'
+    return f'(SELECT MAX(anio) FROM v_eevv_nacimientos WHERE {cap})'
 
 
 def _sv_cols() -> list[str]:
@@ -194,11 +205,16 @@ def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str)
     join_pob = (f"LEFT JOIN (SELECT {pob_key}, SUM(poblacion) AS pob FROM v_demografico_edad_sexo "
                 f"WHERE anio = {pob_year} AND {pob_key} IS NOT NULL GROUP BY 1) p USING ({pob_key}) "
                 f"LEFT JOIN (SELECT {pob_key}, SUM(poblacion) AS men5 FROM v_demografico_menores5 "
-                f"WHERE anio = {pob_year} AND {pob_key} IS NOT NULL GROUP BY 1) m USING ({pob_key})"
+                f"WHERE anio = {pob_year} AND {pob_key} IS NOT NULL GROUP BY 1) m USING ({pob_key}) "
+                f"LEFT JOIN (SELECT {pob_key}, SUM(nacimientos + defunciones_fetales) AS nac "
+                f"FROM v_eevv_nacimientos WHERE anio = {_nac_year(year)} AND {pob_key} IS NOT NULL "
+                f"GROUP BY 1) n USING ({pob_key})"
                 if pob_key else
                 f", (SELECT SUM(poblacion) AS pob FROM v_demografico_edad_sexo WHERE anio = {pob_year} "
                 f"AND geo_mun_codigo IS NOT NULL) p, (SELECT SUM(poblacion) AS men5 FROM "
-                f"v_demografico_menores5 WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) m")
+                f"v_demografico_menores5 WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) m, "
+                f"(SELECT SUM(nacimientos + defunciones_fetales) AS nac FROM v_eevv_nacimientos "
+                f"WHERE anio = {_nac_year(year)}) n")
     sel = []
     for code, pre, den in _SV_EVENTS:
         avail = f"EXISTS (SELECT 1 FROM sivigila_casos WHERE evento = '{code}' AND {yr})"
@@ -206,14 +222,16 @@ def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str)
         sel.append(f"CASE WHEN {avail} THEN {n_ev} END AS {pre}_casos")
         if den:
             scale = _SV_SCALE.get(pre, 100000.0)
-            sel.append(f"CASE WHEN {avail} THEN {scale} * {n_ev} / NULLIF(ANY_VALUE({den}), 0) END AS {pre}_tasa")
+            # births: pro-rate the year's total to the weeks covered (cases are year-to-date)
+            d = f"ANY_VALUE({den}) * LEAST({wk}, 52) / 52.0" if den == 'nac' else f"ANY_VALUE({den})"
+            sel.append(f"CASE WHEN {avail} THEN {scale} * {n_ev} / NULLIF({d}, 0) END AS {pre}_tasa")
     sel.append(f"{wk} AS sv_semana")
     # Preliminary weekly extract (current year) is labelled; final microdata are not
     sel.append(f"(CAST(ANY_VALUE(anio) AS VARCHAR) || ' sem. 1–{wk}' || "
                f"CASE WHEN BOOL_OR(fuente = 'rutinaria') THEN ' (preliminar)' ELSE '' END) AS periodo_sivigila")
     return f"""
     SELECT {level_cols + ', ' if level_cols else ''}{', '.join(sel)}
-    FROM (SELECT c.*, p.pob, m.men5 FROM v_sivigila_casos c {join_pob}
+    FROM (SELECT c.*, p.pob, m.men5, n.nac FROM v_sivigila_casos c {join_pob}
           WHERE {where} AND {yr} AND semana <= {wk}) t
     {grp}"""
 
@@ -1392,8 +1410,15 @@ def build_all(db_path: 'str | Path') -> None:
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
             'v_bdua_eps', 'v_bdua_piramide',
             'v_sivigila_casos', 'v_demografico_menores5',
-            'v_cuipo_salud', 'v_cofin_lma', 'v_cofin_meta',
+            'v_cuipo_salud', 'v_cofin_lma', 'v_cofin_meta', 'v_eevv_nacimientos',
         ]}
+        if not ev['v_eevv_nacimientos']:
+            # Births only feed the syphilis rate: without them it is NULL, the rest of
+            # SIVIGILA still builds
+            con.execute("""CREATE OR REPLACE VIEW v_eevv_nacimientos AS
+                SELECT NULL::INTEGER AS anio, NULL::INTEGER AS geo_dep_codigo,
+                       NULL::INTEGER AS geo_mun_codigo, 0 AS nacimientos, 0 AS defunciones_fetales
+                WHERE FALSE""")
         missing = [k for k, v in ev.items() if not v]
         if missing:
             log.info(f'metricas: vistas no disponibles (serán NULL): {missing}')

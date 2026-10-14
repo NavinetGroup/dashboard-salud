@@ -221,7 +221,8 @@ def transform_financiamiento(con: duckdb.DuckDBPyConnection) -> None:
     for table, prefix, src in (('cuipo_salud', 'cuipo_salud_', 'cuipo_scraper'),
                                ('sgp_salud', 'sgp_salud_', 'sicodis_scraper'),
                                ('cofin_meta', 'cofin_meta_', 'cofinanciacion_scraper'),
-                               ('cofin_lma', 'cofin_lma_', 'cofinanciacion_scraper')):
+                               ('cofin_lma', 'cofin_lma_', 'cofinanciacion_scraper'),
+                               ('eevv_nacimientos', 'eevv_nacimientos_', 'eevv_scraper')):
         con.execute(f'DROP TABLE IF EXISTS {table}')
         if not list(PARQUET_DIR.glob(f'{prefix}*.parquet')):
             log.warning(f'{table}: no hay parquet. Ejecuta scrapers/{src}.py primero.')
