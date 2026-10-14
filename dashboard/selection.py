@@ -59,12 +59,18 @@ class Selection:
 
 
 def sidebar() -> Selection:
+    with st.sidebar.container(key='filtros'):
+        st.markdown('<div class="fct-filtros-title">FILTROS</div>', unsafe_allow_html=True)
+        return _filters()
+
+
+def _filters() -> Selection:
     years = get_available_years()
-    year = st.sidebar.selectbox('Año de referencia', years, index=0, key='sel_year') if years else None
+    year = st.selectbox('Año de referencia', years, index=0, key='sel_year') if years else None
     month = None
     if year is not None:
         opts = ['Último disponible'] + get_available_months(year)
-        m = st.sidebar.selectbox('Mes de referencia', opts, index=0, key='sel_month')
+        m = st.selectbox('Mes de referencia', opts, index=0, key='sel_month')
         month = None if m == 'Último disponible' else m
 
     df_dept = get_dept_metrics(year=year, month=month)
@@ -72,14 +78,14 @@ def sidebar() -> Selection:
     if not depts:
         st.error('La base de datos no tiene departamentos. Ejecute el pipeline y recargue.')
         st.stop()
-    dept_name = st.sidebar.selectbox('Departamento', depts, key='sel_dept')
+    dept_name = st.selectbox('Departamento', depts, key='sel_dept')
     dept_row = df_dept[df_dept['departamento'] == dept_name].iloc[0]
     dept_code = int(dept_row['geo_dep_codigo'])
 
     df_mun = get_mun_metrics(dept_code, year=year, month=month)
     mun_name = mun_row = mun_code = None
     muns = df_mun['municipio'].dropna().tolist()
-    choice = st.sidebar.selectbox('Municipio', ['— Todo el departamento —'] + muns, key='sel_mun')
+    choice = st.selectbox('Municipio', ['— Todo el departamento —'] + muns, key='sel_mun')
     if choice in muns:
         mun_name = choice
         mun_row = df_mun[df_mun['municipio'] == choice].iloc[0]
@@ -96,5 +102,5 @@ def sidebar() -> Selection:
         prev_mun=get_prev_metrics('municipio', year, month, mun_code) if mun_code else pd.Series(dtype=object),
         prev_nat=get_prev_metrics('nacional', year, month),
     )
-    st.sidebar.caption(f'Periodo: **{label}** · cada indicador indica el periodo de sus datos.')
+    st.caption(f'Periodo: **{label}** · cada indicador indica el periodo de sus datos.')
     return sel

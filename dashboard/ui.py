@@ -14,12 +14,66 @@ from registry import MODULES, SRC, Indicator
 _GOOD, _BAD, _FLAT = '#2E7D32', '#C62828', '#F9A825'
 
 
+_SIDEBAR_BG = 'linear-gradient(180deg, #0B5D5E 0%, #084A4B 100%)'
+_NAV_EXTRA = {'detallado': '#546E7A'}   # pages outside MODULES: their chip colour
+
+
+def _sidebar_css() -> str:
+    """Dark Supersalud-teal sidebar (FCT mockup palette): each module link has an
+    icon chip in its module colour and fills with it when active; the filters sit
+    in a light panel. Pages are matched by their URL path (st.Page file name)."""
+    chips = '\n'.join(
+        f'[data-testid="stSidebarNavLink"][href$="/{slug}"] [data-testid="stIconMaterial"] '
+        f'{{ background: {c}; }}\n'
+        f'[data-testid="stSidebarNavLink"][href$="/{slug}"][aria-current="page"] '
+        f'{{ background: {c} !important; }}'
+        for slug, c in {**{k: v[1] for k, v in MODULES.items()}, **_NAV_EXTRA}.items())
+    return f"""
+[data-testid="stSidebar"] {{ background: {_SIDEBAR_BG}; }}
+[data-testid="stSidebarHeader"] {{ margin: 10px 10px 4px 10px; padding: 8px 10px; background: #FFFFFF;
+    border-radius: 12px; }}
+[data-testid="stSidebarCollapseButton"] [data-testid="stIconMaterial"] {{ color: #0B5D5E; }}
+[data-testid="stNavSectionHeader"], [data-testid="stNavSectionHeader"] * {{
+    color: rgba(255,255,255,.62) !important; text-transform: uppercase; letter-spacing: .6px;
+    font-size: 11px !important; font-weight: 700; }}
+[data-testid="stSidebarNavSeparator"] {{ border-color: rgba(255,255,255,.18) !important; }}
+[data-testid="stSidebarNavLink"] {{ border-radius: 10px; margin: 2px 0; padding: 4px 8px; }}
+[data-testid="stSidebarNavLink"]:hover {{ background: rgba(255,255,255,.10) !important; }}
+[data-testid="stSidebarNavLink"] span, [data-testid="stSidebarNavLink"] p {{
+    color: rgba(255,255,255,.90) !important; font-weight: 600; }}
+[data-testid="stSidebarNavLink"] [data-testid="stIconMaterial"] {{
+    color: #FFFFFF !important; background: rgba(255,255,255,.16); border-radius: 8px;
+    padding: 3px; font-size: 18px; }}
+[data-testid="stSidebarNavLink"][aria-current="page"] {{ background: rgba(255,255,255,.18) !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.18); }}
+[data-testid="stSidebarNavLink"][aria-current="page"] span,
+[data-testid="stSidebarNavLink"][aria-current="page"] p {{ color: #FFFFFF !important; font-weight: 800; }}
+[data-testid="stSidebarNavLink"][aria-current="page"] [data-testid="stIconMaterial"] {{
+    background: rgba(255,255,255,.22) !important; }}
+{chips}
+.st-key-filtros {{ background: #FFFFFF; border-radius: 14px; padding: 12px 12px 6px 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.15); }}
+.st-key-filtros [data-testid="stWidgetLabel"] p {{ color: #0B5D5E !important; font-size: 11.5px;
+    font-weight: 800; text-transform: uppercase; letter-spacing: .4px; }}
+.st-key-filtros [data-baseweb="select"] > div {{ background: #F2F6F7; border-color: #D5E3E4;
+    border-radius: 10px; }}
+.fct-filtros-title {{ color: #0B5D5E; font-weight: 800; font-size: 13px; letter-spacing: .6px;
+    display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }}
+[data-testid="stSidebarUserContent"] [data-testid="stCaptionContainer"],
+[data-testid="stSidebarUserContent"] [data-testid="stCaptionContainer"] * {{
+    color: rgba(255,255,255,.78) !important; }}
+.st-key-filtros [data-testid="stCaptionContainer"],
+.st-key-filtros [data-testid="stCaptionContainer"] * {{ color: #546E7A !important; }}
+"""
+
+
 def inject_css() -> None:
     accents = '\n'.join(
         f'[class*="st-key-card-{m}-"] {{ border-top: 4px solid {c} !important; }}'
         for m, (_, c, _) in MODULES.items())
     st.markdown(f"""
 <style>
+{_sidebar_css()}
 [class*="st-key-card-"] {{
     background: #FFFFFF; border-radius: 14px !important;
     box-shadow: 0 2px 10px rgba(0,0,0,0.06); padding: 4px 6px; min-height: 178px;
