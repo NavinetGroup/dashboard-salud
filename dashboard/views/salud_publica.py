@@ -32,6 +32,11 @@ for i in range(0, len(inds), 4):
             if ind.key == 'sifilis' and _v(row, 'sv_sifilis_casos') is not None:
                 n = int(_v(row, 'sv_sifilis_casos'))
                 note = ' · '.join(x for x in (f'{n:,} caso{"s" if n != 1 else ""}'.replace(',', '.'), note) if x)
+            if ind.key == 'vsp' and _v(row, 'vsp_cumple') is not None:
+                pct = lambda c: f'{_v(row, c):.0f} %'
+                note = ' · '.join(x for x in (f'Cumple {pct("vsp_cumple")} · parcial {pct("vsp_parcial")} · '
+                                              f'no cumple {pct("vsp_nocumple")} de '
+                                              f'{int(_v(row, "vsp_subindicadores"))} subindicadores', note) if x)
             if ind.key == 'irca':
                 lvl = _v(row, 'irca_nivel_riesgo')
                 note = ' · '.join(x for x in (f'Riesgo: {lvl}' if lvl else '', note) if x)

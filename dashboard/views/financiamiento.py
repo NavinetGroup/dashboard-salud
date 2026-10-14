@@ -10,7 +10,7 @@ validation (docs/FINANCIAMIENTO_FORMULAS.md). 9–11 must be supplied by the cli
 import streamlit as st
 
 from registry import FINANCIAMIENTO
-from ui import footer, kpi_card, module_header, pending_card, _v
+from ui import footer, kpi_card, module_header, money, pending_card, _v
 
 sel = st.session_state['sel']
 row, prev = sel.entity_row, sel.prev_entity
@@ -29,9 +29,19 @@ st.caption(f'{scope}. Ejecución acumulada en el año al corte del trimestre (CU
            'Fórmulas propuestas, pendientes de validación con Supersalud.')
 
 
+_AMOUNTS = {   # (numerator, denominator) columns and their labels
+    'fin1': (('fls_compromisos', 'Compromisos'), ('fls_recaudo', 'ingresos FLS')),
+    'fin2': (('fls_compromisos', 'Compromisos'), ('fls_apropiacion_definitiva', 'apropiación')),
+    'fin3': (('fls_pagos', 'Pagos'), ('fls_recaudo', 'ingresos FLS')),
+    'fin8': (('cofin_girado', 'Girado'), ('cofin_meta_anual', 'meta anual')),
+}
+
+
 def _note(ind) -> str:
-    if ind.key == 'fin8' and _v(row, ind.col) is not None:
-        return 'Esfuerzo propio girado ÷ meta MSPS prorrateada (100 % = al día)'
+    if ind.key in _AMOUNTS and _v(row, ind.col) is not None:
+        (n, nl), (d, dl) = _AMOUNTS[ind.key]
+        txt = f'{nl} {money(_v(row, n))} · {dl} {money(_v(row, d))}'
+        return txt + (' · 100 % = al día con la meta prorrateada' if ind.key == 'fin8' else '')
     # No SGP subsidio a la oferta allocation (≈⅔ of municipalities) → NULL, not 0 %
     if ind.key in ('fin6', 'fin7') and _v(row, ind.col) is None and _v(row, 'fin_sgp_sp_comp') is not None:
         return 'Sin asignación SGP de subsidio a la oferta'

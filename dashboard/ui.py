@@ -111,6 +111,34 @@ def trend_md(ind: Indicator, cur, prev, prev_period: str | None, period: str | N
     return f'<span class="fct-trend" style="color:{color}">{arrow} <b>{txt}</b>{ref}</span>'
 
 
+_SHARE_OF = {'pob_hombres': 'pob_total', 'pob_mujeres': 'pob_total', 'pob_etnica': 'pob_total',
+             'ips_publica': 'ips_total', 'ips_privada': 'ips_total', 'ips_mixta': 'ips_total'}
+
+
+def share_note(ind: Indicator, row) -> str:
+    """'48,7% del total' for the indicators the mockup shows as a share."""
+    base = _SHARE_OF.get(ind.key)
+    v, tot = _v(row, ind.col), _v(row, base) if base else None
+    if v is None or not tot:
+        return ''
+    return f'{float(v) / float(tot) * 100:.1f}% del total'.replace('.', ',')
+
+
+def money(v) -> str:
+    """Pesos in compact Spanish form: '$ 3,48 billones', '$ 6,2 mil millones',
+    '$ 840 mil millones', '$ 56,7 millones'."""
+    if v is None:
+        return 'N/D'
+    v = float(v)
+    if abs(v) >= 1e12:
+        s, unit = f'{v / 1e12:,.2f}', 'billones'
+    elif abs(v) >= 1e9:
+        s, unit = f'{v / 1e9:,.{1 if abs(v) < 1e11 else 0}f}', 'mil millones'
+    else:
+        s, unit = f'{v / 1e6:,.1f}', 'millones'
+    return f"$ {s.replace(',', '§').replace('.', ',').replace('§', '.')} {unit}"
+
+
 def kpi_card(module: str, ind: Indicator, row, prev=None, note: str = '') -> None:
     """One indicator card. row/prev: metric rows for the selection and for the same
     period one year earlier."""

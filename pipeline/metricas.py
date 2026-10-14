@@ -321,7 +321,10 @@ def _cofin_sql(group_cols: str, where: str, girado: str, meta: str, year, month,
 # sub-indicators of groups 1–7 (0–1; 'NA' excluded); group 8 (8-1) is the
 # progress in basic capacities. Some files write percentages (60, 100) and a few
 # values exceed 1 slightly: rescale, then cap at 1.
-_VSP_COLS = ('vsp_cumplimiento', 'vsp_capacidades', 'vsp_subindicadores', 'periodo_vsp')
+# vsp_cumple / _parcial / _nocumple: share of the applicable sub-indicators met in
+# full (1), partly (0–1) or not at all (0) — the mockup's VSP donut
+_VSP_COLS = ('vsp_cumplimiento', 'vsp_capacidades', 'vsp_subindicadores',
+             'vsp_cumple', 'vsp_parcial', 'vsp_nocumple', 'periodo_vsp')
 _VSP_VAL = "LEAST(1.0, CASE WHEN valor > 1.5 THEN valor / 100.0 ELSE valor END)"
 
 
@@ -339,6 +342,12 @@ def _vsp_sql(group_cols: str, where: str, year, month, caps: dict | None, pool: 
                100.0 * AVG({_VSP_VAL}) FILTER (WHERE grupo BETWEEN 1 AND 7) AS vsp_cumplimiento,
                100.0 * ANY_VALUE({_VSP_VAL}) FILTER (WHERE grupo = 8) AS vsp_capacidades,
                COUNT(valor) FILTER (WHERE grupo BETWEEN 1 AND 7) AS vsp_subindicadores,
+               100.0 * AVG(CASE WHEN {_VSP_VAL} >= 0.995 THEN 1 ELSE 0 END)
+                   FILTER (WHERE grupo BETWEEN 1 AND 7 AND valor IS NOT NULL) AS vsp_cumple,
+               100.0 * AVG(CASE WHEN {_VSP_VAL} > 0 AND {_VSP_VAL} < 0.995 THEN 1 ELSE 0 END)
+                   FILTER (WHERE grupo BETWEEN 1 AND 7 AND valor IS NOT NULL) AS vsp_parcial,
+               100.0 * AVG(CASE WHEN {_VSP_VAL} = 0 THEN 1 ELSE 0 END)
+                   FILTER (WHERE grupo BETWEEN 1 AND 7 AND valor IS NOT NULL) AS vsp_nocumple,
                {label} AS periodo_vsp
         FROM v_ins_vsp
         WHERE ({where}) AND anio * 10 + trimestre = {last}
@@ -346,7 +355,9 @@ def _vsp_sql(group_cols: str, where: str, year, month, caps: dict | None, pool: 
     if pool:
         return f"""
     SELECT AVG(vsp_cumplimiento) AS vsp_cumplimiento, AVG(vsp_capacidades) AS vsp_capacidades,
-           SUM(vsp_subindicadores) AS vsp_subindicadores, ANY_VALUE(periodo_vsp) AS periodo_vsp
+           SUM(vsp_subindicadores) AS vsp_subindicadores, AVG(vsp_cumple) AS vsp_cumple,
+           AVG(vsp_parcial) AS vsp_parcial, AVG(vsp_nocumple) AS vsp_nocumple,
+           ANY_VALUE(periodo_vsp) AS periodo_vsp
     FROM ({per_entity})"""
     return f"SELECT {group_cols}, {', '.join(_VSP_COLS)} FROM ({per_entity})"
 

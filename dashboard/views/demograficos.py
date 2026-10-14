@@ -10,7 +10,7 @@ import streamlit as st
 from charts import donut_gender, map_location, map_municipios
 from data import load_geojson, load_geojson_mpios, load_geojson_vecinos
 from registry import DEMOGRAFICOS, ETNIAS, MODULES
-from ui import card_grid, footer, fmt, module_header, _v
+from ui import card_grid, footer, fmt, module_header, share_note, _v
 
 sel = st.session_state['sel']
 
@@ -25,7 +25,8 @@ row = sel.entity_row
 module_header('demograficos', 'Caracterización poblacional del territorio — proyecciones DANE '
               'y autorreconocimiento étnico-racial', sel)
 
-card_grid('demograficos', DEMOGRAFICOS, row, sel.prev_entity)
+card_grid('demograficos', DEMOGRAFICOS, row, sel.prev_entity,
+          notes={i.key: share_note(i, row) for i in DEMOGRAFICOS})
 
 st.markdown('#### Localización territorial')
 # Drill-down (FCT): Colombia → department → municipality and its surroundings
@@ -48,7 +49,7 @@ with c_mun:
 if vecinos and vecinos['features']:
     with c_vec:
         st.caption(f'{sel.mun_name} y alrededores')
-        st.plotly_chart(map_municipios(vecinos, names, mun_str, color), use_container_width=True)
+        st.plotly_chart(map_municipios(vecinos, names, mun_str, color, labels=True), use_container_width=True)
 elif mun_str:
     st.caption(f'{sel.mun_name}: sin polígono en la cartografía DANE MGN 2025.')
 with st.container():

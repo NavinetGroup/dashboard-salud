@@ -164,6 +164,10 @@ PRESTACION = [
     Indicator('ips_mixta', 'IPS mixtas', 'ips_mixta', 'IPS', icon='corporate_fare', trend='', source='reps'),
 ]
 
+# Supersalud list, by department of the IPS (Prestación page and Ficha band)
+IPS_INTERV = Indicator('ips_interv', 'IPS intervenidas por la Supersalud', 'ips_intervenidas', 'IPS',
+                       icon='gpp_maybe', trend='', source='supersalud', dept_only=True)
+
 CAPACIDAD = [
     Indicator('camas', 'Camas hospitalarias', 'camas', 'camas', icon='bed', trend='', source='reps'),
     Indicator('consultorios', 'Consultorios', 'consultorios', '', icon='stethoscope', trend='', source='reps'),
@@ -179,7 +183,8 @@ CAPACIDAD = [
 _CLIENT = 'Dato interno: solicitar a Supersalud / MSPS.'
 
 
-def _fin(key, label, col, icon, source='cuipo', better=False):
+def _fin(key, label, col, icon, source='cuipo', better=True):
+    # better: True = higher is better (execution), None = no direction (green/red off)
     return Indicator(key, label, col, '%', decimals=1, icon=icon, trend='pp', source=source,
                      period_col='periodo_cuipo', lower_is_better=None if better is None else not better)
 
@@ -208,13 +213,13 @@ FINANCIAMIENTO = [
 
 # ── Ficha: the KPIs shown per module band ────────────────────────────────────
 _BY_KEY = {i.key: i for group in (DEMOGRAFICOS, SALUD_PUBLICA, ASEGURAMIENTO, SISBEN,
-                                   PRESTACION, CAPACIDAD, FINANCIAMIENTO) for i in group}
+                                   PRESTACION, [IPS_INTERV], CAPACIDAD, FINANCIAMIENTO) for i in group}
 
 FICHA = {
     'demograficos':   ['pob_hombres', 'pob_mujeres', 'pob_total', 'pob_etnica'],
     'salud_publica':  ['mm', 'dnt', 'mort_dnt', 'suicidio'],
     'aseguramiento':  ['eps_total', 'eps_interv', 'afil_subs', 'afil_contrib', 'cobertura'],
-    'prestacion':     ['ips_total', 'ips_publica', 'ips_privada', 'ips_mixta', 'camas'],
+    'prestacion':     ['ips_total', 'ips_publica', 'ips_privada', 'ips_mixta', 'ips_interv'],
     'financiamiento': ['fin1', 'fin4', 'fin6', 'fin8'],
 }
 

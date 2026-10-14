@@ -33,7 +33,26 @@ def _is_null(v) -> bool:
 
 # Maps draw the DANE polygons on a plain background (plotly geo, fitted to the
 # shapes): no tile server, so no API key and they work offline.
-_GEO = dict(fitbounds='locations', visible=False, bgcolor='rgba(0,0,0,0)', projection_type='mercator')
+_GEO = dict(visible=False, bgcolor='rgba(0,0,0,0)', projection_type='mercator')
+
+
+def _geo(geojson: dict, pad: float = 0.04) -> dict:
+    """Geo layout framing the polygons by explicit lon/lat ranges. Plotly's
+    fitbounds is computed at the first render width, before Streamlit narrows
+    the column, which crops the map; fixed ranges re-fit on every resize."""
+    xs, ys = [], []
+
+    def walk(c):
+        if c and isinstance(c[0], (int, float)):
+            xs.append(c[0]); ys.append(c[1])
+        else:
+            for x in c:
+                walk(x)
+    for f in geojson['features']:
+        walk(f['geometry']['coordinates'])
+    dx, dy = (max(xs) - min(xs)) * pad + 0.01, (max(ys) - min(ys)) * pad + 0.01
+    return {**_GEO, 'lonaxis_range': [min(xs) - dx, max(xs) + dx],
+            'lataxis_range': [min(ys) - dy, max(ys) + dy]}
 
 _ETHNIC_COLS = [
     ('pob_indigena',     'Indígena'),
@@ -140,7 +159,7 @@ def choropleth_dept(df: pd.DataFrame, metric: str, geojson: dict,
         hover_data={metric: True, 'dep_str': False}, labels={metric: label or metric},
         title=title_txt, height=500)
     fig.update_traces(marker_line_width=0.6, marker_line_color='white')
-    fig.update_geos(**_GEO)
+    fig.update_geos(**_geo(geojson))
     fig.update_layout(margin={'r': 0, 't': 40, 'l': 0, 'b': 0},
                       coloraxis_colorbar={'title': unit or ''})
     return fig
@@ -362,16 +381,18 @@ def map_location(df_dept: pd.DataFrame, geojson: dict, dep_str: str,
         colorscale=[[0, '#D7EDEA'], [1, color]], zmin=0, zmax=1, showscale=False,
         marker_line_width=0.6, marker_line_color='white',
         text=d['departamento'], hovertemplate='%{text}<extra></extra>'))
-    fig.update_geos(**_GEO)
+    fig.update_geos(**_geo(geojson))
     fig.update_layout(margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=420,
                       paper_bgcolor='rgba(0,0,0,0)')
     return fig
 
 
 def map_municipios(geojson: dict, names: dict[str, str], mun_str: str | None,
-                   color: str = '#26A69A', height: int = 420) -> go.Figure:
+                   color: str = '#26A69A', height: int = 420, labels: bool = False) -> go.Figure:
     """A department's municipalities, the selected one highlighted (Localización
-    municipal). names: 5-digit DIVIPOLA → municipality name, for the hover."""
+    municipal). names: 5-digit DIVIPOLA → municipality name, for the hover.
+    labels=True writes each name at the centre of its bounding box (the
+    close-up "municipio y alrededores" map, as in the mockup)."""
     ids = [f['id'] for f in geojson['features']]
     fig = go.Figure(go.Choropleth(
         geojson=geojson, locations=ids, z=[1 if i == mun_str else 0 for i in ids],
@@ -380,7 +401,16 @@ def map_municipios(geojson: dict, names: dict[str, str], mun_str: str | None,
         text=[names.get(i) or f['properties'].get('nombre', i).title()
               for i, f in zip(ids, geojson['features'])],
         hovertemplate='%{text}<extra></extra>'))
-    fig.update_geos(**_GEO)
+    if labels:
+        feats = [f for f in geojson['features'] if 'bbox' in f]
+        fig.add_trace(go.Scattergeo(
+            lon=[(f['bbox'][0] + f['bbox'][2]) / 2 for f in feats],
+            lat=[(f['bbox'][1] + f['bbox'][3]) / 2 for f in feats],
+            text=[names.get(f['id']) or f['properties'].get('nombre', '').title() for f in feats],
+            mode='text', hoverinfo='skip', showlegend=False,
+            textfont={'size': [13 if f['id'] == mun_str else 10 for f in feats],
+                      'color': ['white' if f['id'] == mun_str else '#37474F' for f in feats]}))
+    fig.update_geos(**_geo(geojson))
     fig.update_layout(margin={'r': 0, 't': 0, 'l': 0, 'b': 0}, height=height,
                       paper_bgcolor='rgba(0,0,0,0)')
     return fig

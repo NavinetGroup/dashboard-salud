@@ -4,7 +4,7 @@
 import streamlit as st
 
 from charts import donut_ips
-from registry import CAPACIDAD, PRESTACION, Indicator
+from registry import CAPACIDAD, IPS_INTERV, PRESTACION, Indicator
 from ui import card_grid, footer, kpi_card, module_header, pending_card, _v
 
 sel = st.session_state['sel']
@@ -25,9 +25,8 @@ st.caption('Capacidad reportada por las IPS habilitadas en el REPS. UCI pediátr
 
 c_interv, c_estado, c_red = st.columns([1, 1, 2])
 with c_interv:
-    kpi_card('prestacion', Indicator('ips_interv', 'IPS intervenidas por la Supersalud',
-                                     'ips_intervenidas', 'IPS', icon='gpp_maybe', trend=''),
-             sel.dept_row, None, f'Departamento de {sel.dept_name}' if sel.use_mun else '')
+    kpi_card('prestacion', IPS_INTERV, sel.dept_row, None,
+             f'Departamento de {sel.dept_name}' if sel.use_mun else '')
 with c_estado:
     pending_card('prestacion', Indicator(
         'estado_interv', 'Estado de las intervenciones', None, icon='donut_large',
