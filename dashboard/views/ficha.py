@@ -6,7 +6,7 @@ import html
 import streamlit as st
 
 from registry import FICHA, MODULES, get
-from ui import footer, kpi_card, module_header, share_note, _v
+from ui import CARD_H, footer, kpi_card, module_header, share_note, _v
 
 sel = st.session_state['sel']
 
@@ -30,17 +30,28 @@ def _pick(ind):
     return sel.entity_row, sel.prev_entity, ''
 
 
-st.markdown('<style>[class*="st-key-band-"] { border-radius: 14px; padding: 14px 16px; color: white; '
-            'min-height: 178px; } [class*="st-key-band-"] p { color: white !important; }</style>'
-            + ''.join(f'<style>.st-key-band-{m} {{ background: {MODULES[m][1]}; }}</style>' for m in FICHA),
-            unsafe_allow_html=True)
+# Band panel = one card tall, so each module row is a clean strip of equal height;
+# the band column has the same width in every row and the cards fill the rest.
+SLOTS = 5
+st.markdown(f'''<style>
+.fct-band {{ height: {CARD_H}px; border-radius: 14px; padding: 14px 16px; color: white;
+    display: flex; flex-direction: column; justify-content: center; gap: 6px; margin-bottom: 14px;
+    box-shadow: 0 2px 10px rgba(0,0,0,.10); }}
+.fct-band .num {{ display: flex; align-items: center; gap: 10px; font-size: 30px; font-weight: 800; }}
+.fct-band .num .fct-ico {{ color: white; font-size: 30px; line-height: 30px; }}
+.fct-band .t {{ font-size: 15px; font-weight: 800; letter-spacing: .3px; line-height: 1.2; }}
+.fct-band .s {{ font-size: 13px; opacity: .9; }}
+</style>''', unsafe_allow_html=True)
 
 for n, (module, keys) in enumerate(FICHA.items(), start=1):
-    title, _, icon = MODULES[module]
-    cols = st.columns([1.25] + [1] * len(keys))
-    with cols[0], st.container(key=f'band-{module}'):
-        st.markdown(f'### {n} :material/{icon}:')
-        st.markdown(f'**{html.escape(title.upper())}**  \n{SUBTITLES[module]}')
+    title, color, icon = MODULES[module]
+    # band column fixed; the cards share the rest of the row (4 or 5 per band)
+    cols = st.columns([1.0] + [SLOTS / len(keys)] * len(keys))
+    with cols[0]:
+        st.markdown(f'<div class="fct-band" style="background:linear-gradient(160deg,{color},{color}D9)">'
+                    f'<div class="num">{n}<span class="fct-ico">{icon}</span></div>'
+                    f'<div class="t">{html.escape(title.upper())}</div>'
+                    f'<div class="s">{html.escape(SUBTITLES[module])}</div></div>', unsafe_allow_html=True)
     for col, key in zip(cols[1:], keys):
         ind = get(key)
         with col:

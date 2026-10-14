@@ -5,6 +5,8 @@ the source footer. Icons are Streamlit's bundled Material Symbols (work offline)
 """
 
 import html
+import re
+from contextlib import contextmanager
 
 import pandas as pd
 import streamlit as st
@@ -12,6 +14,7 @@ import streamlit as st
 from registry import MODULES, SRC, Indicator
 
 _GOOD, _BAD, _FLAT = '#2E7D32', '#C62828', '#F9A825'
+CARD_H = 226          # px: every KPI card, so cards in a row and across rows line up
 
 
 _SIDEBAR_BG = 'linear-gradient(180deg, #0B5D5E 0%, #084A4B 100%)'
@@ -68,35 +71,60 @@ def _sidebar_css() -> str:
 
 
 def inject_css() -> None:
-    accents = '\n'.join(
-        f'[class*="st-key-card-{m}-"] {{ border-top: 4px solid {c} !important; }}'
-        for m, (_, c, _) in MODULES.items())
+    panels = '\n'.join(f'[class*="st-key-panel-{m}-"] {{ border-top-color: {c} !important; }}'
+                         for m, (_, c, _) in MODULES.items())
     st.markdown(f"""
 <style>
 {_sidebar_css()}
-[class*="st-key-card-"] {{
-    background: #FFFFFF; border-radius: 14px !important;
-    box-shadow: 0 2px 10px rgba(0,0,0,0.06); padding: 4px 6px; min-height: 178px;
-}}
-{accents}
-[class*="st-key-card-"].pending, [class*="st-key-pend-"] {{
-    background: #F5F7F8; border-top: 4px solid #CFD8DC !important; min-height: 178px;
-    border-radius: 14px !important;
-}}
-.fct-label  {{ font-size: 12.5px; font-weight: 700; color: #37474F; text-transform: uppercase;
-               letter-spacing: .3px; line-height: 1.25; min-height: 32px; }}
-.fct-value  {{ font-size: 30px; font-weight: 800; line-height: 1.1; margin-top: 2px; }}
-.fct-unit   {{ font-size: 12px; color: #78909C; margin-top: 2px; }}
-.fct-trend  {{ font-size: 12.5px; margin-top: 8px; padding: 4px 8px; border-radius: 8px;
-               display: inline-block; background: #F5F7F8; }}
-.fct-period {{ font-size: 11px; color: #90A4AE; margin-top: 6px; }}
-.fct-pend   {{ font-size: 12px; color: #78909C; margin-top: 6px; }}
+/* ── KPI card: one fixed layout everywhere, so cards in a row line up ───────── */
+.fct-card {{
+    height: {CARD_H}px; display: flex; flex-direction: column; overflow: hidden;
+    background: #FFFFFF; border-radius: 14px; border-top: 4px solid var(--c);
+    box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 12px 14px 10px 14px; margin-bottom: 14px; }}
+.fct-card.pending {{ background: #F5F7F8; border-top-color: #CFD8DC; box-shadow: none; }}
+.fct-card-h {{ display: flex; gap: 6px; align-items: flex-start; min-height: 47px; }}
+.fct-ico {{ font-family: 'Material Symbols Rounded'; font-size: 18px; line-height: 17px;
+    color: var(--c, #546E7A); font-weight: normal; font-style: normal; letter-spacing: normal;
+    text-transform: none; white-space: nowrap; -webkit-font-feature-settings: 'liga';
+    font-feature-settings: 'liga'; -webkit-font-smoothing: antialiased; }}
+.fct-label {{ font-size: 11.5px; font-weight: 700; color: #37474F; text-transform: uppercase;
+    letter-spacing: .3px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical; overflow: hidden; }}
+.fct-card-v {{ margin-top: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+.fct-value  {{ font-size: 30px; font-weight: 800; line-height: 1.1; color: var(--c); }}
+.fct-value.nd {{ color: #B0BEC5; }}
+.fct-value.small {{ font-size: 20px; }}
+.fct-unit   {{ font-size: 12px; color: #78909C; margin-top: 1px; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; min-height: 16px; }}
+.fct-trend  {{ font-size: 11.5px; margin-top: 6px; padding: 3px 8px; border-radius: 8px;
+    background: #F5F7F8; max-width: 100%; align-self: flex-start; line-height: 1.3;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+.fct-spark {{ margin-top: 4px; height: 30px; }}
+.fct-card-f {{ margin-top: auto; font-size: 11px; color: #78909C; line-height: 1.35; }}
+.fct-card-f div {{ display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }}
+.fct-card-f .fct-period {{ -webkit-line-clamp: 1; color: #90A4AE; }}
+/* ── panel: white titled box for charts and tables ─────────────────────────── */
+[class*="st-key-panel-"] {{ background: #FFFFFF; border-radius: 16px; border-top: 4px solid #CFD8DC;
+    box-shadow: 0 2px 10px rgba(0,0,0,.07); padding: 12px 16px 8px 16px; margin-bottom: 14px; }}
+{panels}
+.fct-panel-h {{ font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: .4px;
+    display: flex; align-items: center; gap: 6px; margin-bottom: 2px; }}
+.fct-panel-h .fct-ico {{ color: inherit; }}
+.fct-panel-sub {{ font-size: 12px; color: #78909C; margin: -2px 0 4px 0; }}
 .fct-header {{ border-radius: 16px; padding: 18px 24px; color: white; margin-bottom: 14px; }}
 .fct-header h1 {{ color: white; font-size: 30px; margin: 0; padding: 0; font-weight: 800; }}
 .fct-header p  {{ color: rgba(255,255,255,.88); margin: 4px 0 0 0; font-size: 15px; }}
 .fct-crumb  {{ font-size: 14px; color: rgba(255,255,255,.9); margin-top: 6px; }}
 .fct-footer {{ background: #EEF5F5; border-radius: 12px; padding: 10px 16px; font-size: 12.5px;
                color: #455A64; margin-top: 16px; }}
+.fct-table {{ width: 100%; border-collapse: separate; border-spacing: 0 6px; font-size: 13.5px; }}
+.fct-table, .fct-table tr, .fct-table td {{ border: none !important; }}
+.fct-table td {{ padding: 8px 10px; background: #F7FAFA; }}
+.fct-table td:nth-child(3) {{ text-align: right; color: #37474F; }}
+.fct-table td:first-child {{ border-radius: 10px 0 0 10px; }}
+.fct-table td:last-child {{ border-radius: 0 10px 10px 0; text-align: right; font-weight: 800; }}
+.fct-chip {{ display: inline-block; width: 12px; height: 12px; border-radius: 4px; margin-right: 8px;
+    vertical-align: -1px; }}
 </style>""", unsafe_allow_html=True)
 
 
@@ -193,9 +221,40 @@ def money(v) -> str:
     return f"$ {s.replace(',', '§').replace('.', ',').replace('§', '.')} {unit}"
 
 
-def kpi_card(module: str, ind: Indicator, row, prev=None, note: str = '') -> None:
-    """One indicator card. row/prev: metric rows for the selection and for the same
-    period one year earlier."""
+def spark_svg(values: list, color: str, width: int = 220, height: int = 30) -> str:
+    """Inline SVG sparkline (inside a card, unlike a Plotly chart)."""
+    vals = [float(v) for v in values if v is not None and not pd.isna(v)]
+    if len(vals) < 2:
+        return ''
+    lo, hi = min(vals), max(vals)
+    span = (hi - lo) or 1.0
+    step = width / (len(vals) - 1)
+    pts = ' '.join(f'{i * step:.1f},{height - 3 - (v - lo) / span * (height - 6):.1f}'
+                   for i, v in enumerate(vals))
+    return (f'<svg class="fct-spark" viewBox="0 0 {width} {height}" preserveAspectRatio="none" width="100%">'
+            f'<polyline points="0,{height} {pts} {width},{height}" fill="{color}1A" stroke="none"/>'
+            f'<polyline points="{pts}" fill="none" stroke="{color}" stroke-width="2" '
+            f'vector-effect="non-scaling-stroke"/></svg>')
+
+
+def _card(color: str, icon: str, label: str, value_html: str, unit: str, trend: str,
+          period: str, note: str, extra: str = '', pending: bool = False) -> str:
+    foot = ((f'<div class="fct-period">Datos: {html.escape(period)}</div>' if period else '')
+            + (f'<div>{html.escape(note)}</div>' if note else ''))
+    tip = ' · '.join(x for x in (label, period and f'Datos: {period}', note) if x)
+    return (f'<div class="fct-card{" pending" if pending else ""}" style="--c:{color}" '
+            f'title="{html.escape(tip)}">'
+            f'<div class="fct-card-h"><span class="fct-ico">{html.escape(icon)}</span>'
+            f'<span class="fct-label">{html.escape(label)}</span></div>'
+            f'<div class="fct-card-v">{value_html}</div>'
+            f'<div class="fct-unit">{html.escape(unit)}</div>{trend}{extra}'
+            f'<div class="fct-card-f">{foot}</div></div>')
+
+
+def kpi_card(module: str, ind: Indicator, row, prev=None, note: str = '',
+             spark: list | None = None) -> None:
+    """One indicator card (fixed size). row/prev: metric rows for the selection and
+    for the same period one year earlier. spark: optional series drawn in the card."""
     if ind.col is None:
         return pending_card(module, ind)
     color = MODULES[module][1]
@@ -205,27 +264,19 @@ def kpi_card(module: str, ind: Indicator, row, prev=None, note: str = '') -> Non
         col, period_col, fb_note = ind.fallback
         cur = _v(row, col)
         note = ' · '.join(x for x in (fb_note, note) if x)
-    with st.container(border=True, key=f'card-{module}-{ind.key}'):
-        st.markdown(f':material/{ind.icon}: <span class="fct-label">{html.escape(ind.label)}</span>',
-                    unsafe_allow_html=True)
-        prev_period = _v(prev, period_col) if period_col else None
-        period = _v(row, period_col) if period_col else None
-        st.markdown(
-            f'<div class="fct-value" style="color:{color if cur is not None else "#B0BEC5"}">'
-            f'{fmt(ind, cur)}</div>'
-            f'<div class="fct-unit">{html.escape(ind.unit if ind.unit != "%" else "")}</div>'
-            f'{trend_md(ind, cur, _v(prev, col), prev_period, period)}'
-            + (f'<div class="fct-period">Datos: {html.escape(str(period))}</div>' if period else '')
-            + (f'<div class="fct-pend">{html.escape(note)}</div>' if note else ''),
-            unsafe_allow_html=True)
+    prev_period = _v(prev, period_col) if period_col else None
+    period = _v(row, period_col) if period_col else None
+    value = f'<span class="fct-value{"" if cur is not None else " nd"}">{fmt(ind, cur)}</span>'
+    st.markdown(_card(color, ind.icon, ind.label, value, ind.unit if ind.unit != '%' else '',
+                      trend_md(ind, cur, _v(prev, col), prev_period, period),
+                      str(period) if period else '', note,
+                      spark_svg(spark, color) if spark else ''), unsafe_allow_html=True)
 
 
 def pending_card(module: str, ind: Indicator) -> None:
-    with st.container(border=True, key=f'pend-{module}-{ind.key}'):
-        st.markdown(f':material/{ind.icon}: <span class="fct-label">{html.escape(ind.label)}</span>',
-                    unsafe_allow_html=True)
-        st.markdown('<div class="fct-value" style="color:#B0BEC5;font-size:20px">Fuente pendiente</div>'
-                    f'<div class="fct-pend">{html.escape(ind.pending)}</div>', unsafe_allow_html=True)
+    st.markdown(_card('#90A4AE', ind.icon, ind.label,
+                      '<span class="fct-value nd small">Fuente pendiente</span>', '', '', '',
+                      ind.pending, pending=True), unsafe_allow_html=True)
 
 
 def card_grid(module: str, indicators: list[Indicator], row, prev=None, per_row: int = 4,
@@ -235,6 +286,27 @@ def card_grid(module: str, indicators: list[Indicator], row, prev=None, per_row:
         for col, ind in zip(cols, indicators[i:i + per_row]):
             with col:
                 kpi_card(module, ind, row, prev, (notes or {}).get(ind.key, ''))
+
+
+@contextmanager
+def panel(module: str, title: str, icon: str = '', subtitle: str = ''):
+    """White titled box in the module colour, for charts and tables."""
+    color = MODULES[module][1]
+    key = re.sub(r'[^a-z0-9]+', '-', title.lower().encode('ascii', 'ignore').decode()).strip('-')
+    with st.container(key=f'panel-{module}-{key}'):
+        st.markdown(f'<div class="fct-panel-h" style="color:{color}">'
+                    + (f'<span class="fct-ico">{html.escape(icon)}</span>' if icon else '')
+                    + f'{html.escape(title)}</div>'
+                    + (f'<div class="fct-panel-sub">{html.escape(subtitle)}</div>' if subtitle else ''),
+                    unsafe_allow_html=True)
+        yield
+
+
+def chart(fig, key: str | None = None) -> None:
+    """Plotly figure with the dashboard's settings: no toolbar, and no scroll-zoom
+    (the mouse wheel scrolls the page, not the map)."""
+    st.plotly_chart(fig, use_container_width=True, key=key,
+                    config={'displayModeBar': False, 'scrollZoom': False})
 
 
 def footer(text: str, sources: list[str]) -> None:

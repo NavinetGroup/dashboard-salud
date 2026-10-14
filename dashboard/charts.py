@@ -165,73 +165,50 @@ def choropleth_dept(df: pd.DataFrame, metric: str, geojson: dict,
     return fig
 
 
-def _donut(vals: list, labels: list, colors: list,
-           title: str, center_label: str = '') -> go.Figure:
-    """Shared donut builder: clean slices, percent labels outside, legend below."""
-    total = sum(v for v in vals if v)
-    center_text = center_label or (f'{total:,.0f}' if total else '')
-
+def _donut(vals: list, labels: list, colors: list, center_value: str, center_label: str,
+           height: int = 260) -> go.Figure:
+    """Donut in the FCT style: no title (the panel has it), centre total, legend on
+    the right reading '49,1 %  Hombres (1.234.567)'."""
+    total = sum(v for v in vals if v) or 0
+    names = [f'<b>{(v / total * 100 if total else 0):.1f} %</b>  {l} ({v:,.0f})'
+             .replace(',', '§').replace('.', ',').replace('§', '.') for v, l in zip(vals, labels)]
     fig = go.Figure(go.Pie(
-        values=vals,
-        labels=labels,
-        hole=0.60,
-        marker={'colors': colors, 'line': {'color': 'white', 'width': 3}},
-        textposition='outside',
-        textinfo='percent',
-        textfont={'size': 13, 'color': '#333'},
-        hovertemplate='<b>%{label}</b><br>%{value:,.0f}<br>%{percent}<extra></extra>',
-        pull=[0.03] * len(vals),
-    ))
-
-    # Centre annotation: label + value
-    fig.add_annotation(
-        text=f'<b style="font-size:15px">{center_text}</b>',
-        x=0.5, y=0.5, showarrow=False,
-        font={'size': 15, 'color': '#1A237E'},
-        xanchor='center', yanchor='middle',
-    )
-
-    fig.update_layout(
-        title={'text': title, 'font': {'size': 13}, 'x': 0.5, 'xanchor': 'center'},
-        showlegend=True,
-        legend={
-            'orientation': 'h',
-            'x': 0.5, 'xanchor': 'center',
-            'y': -0.12,
-            'font': {'size': 11},
-        },
-        margin={'t': 45, 'b': 30, 'l': 20, 'r': 20},
-        height=290,
-        paper_bgcolor='rgba(0,0,0,0)',
-        plot_bgcolor='rgba(0,0,0,0)',
-    )
+        values=vals, labels=names, hole=0.66, sort=False, direction='clockwise',
+        marker={'colors': colors, 'line': {'color': 'white', 'width': 2}}, textinfo='none',
+        hovertemplate='%{label}<extra></extra>'))
+    fig.add_annotation(text=f'<b>{center_value}</b><br><span style="font-size:11px;color:#78909C">'
+                            f'{center_label}</span>',
+                       x=0.5, y=0.5, showarrow=False, font={'size': 17, 'color': '#263238'})
+    fig.update_layout(showlegend=True, height=height, margin={'t': 6, 'b': 6, 'l': 6, 'r': 6},
+                      legend={'orientation': 'v', 'x': 1.02, 'xanchor': 'left', 'y': 0.5, 'yanchor': 'middle',
+                              'font': {'size': 13, 'color': '#37474F'}},
+                      paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)')
     return fig
 
 
-def donut_ips(row: pd.Series) -> go.Figure:
-    vals   = [_n(row.get('ips_publica')), _n(row.get('ips_privada')), _n(row.get('ips_mixta'))]
-    labels = ['Pública', 'Privada', 'Mixta']
-    colors = ['#26A69A', '#42A5F5', '#FFA726']
-    total  = int(sum(vals))
-    return _donut(vals, labels, colors, 'Tipo de IPS', f'{total:,}\nIPS')
+def _thousands(v: float) -> str:
+    return f'{v:,.0f}'.replace(',', '.')
 
 
-def donut_afil(row: pd.Series) -> go.Figure:
-    vals   = [_n(row.get('afiliados_subsidiado')), _n(row.get('afiliados_contributivo'))]
-    labels = ['Subsidiado', 'Contributivo']
-    colors = ['#5C6BC0', '#26C6DA']
-    total  = int(sum(vals))
-    return _donut(vals, labels, colors, 'Régimen de afiliación',
-                  f'{total:,}\nafiliados')
+def donut_ips(row: pd.Series, height: int = 260) -> go.Figure:
+    """Network composition in the Prestación greens (mockup: públicas dark,
+    privadas light, mixtas yellow)."""
+    vals = [_n(row.get('ips_publica')), _n(row.get('ips_privada')), _n(row.get('ips_mixta'))]
+    return _donut(vals, ['Públicas', 'Privadas', 'Mixtas'], ['#2E7D32', '#A5D6A7', '#FBC02D'],
+                  _thousands(sum(vals)), 'IPS', height)
 
 
-def donut_gender(row: pd.Series) -> go.Figure:
-    vals   = [_n(row.get('pob_hombres')), _n(row.get('pob_mujeres'))]
-    labels = ['Hombres', 'Mujeres']
-    colors = ['#42A5F5', '#EC407A']
-    total  = int(sum(vals))
-    return _donut(vals, labels, colors, 'Distribución por sexo',
-                  f'{total:,}\nhabitantes')
+def donut_afil(row: pd.Series, height: int = 260) -> go.Figure:
+    vals = [_n(row.get('afiliados_subsidiado')), _n(row.get('afiliados_contributivo'))]
+    return _donut(vals, ['Subsidiado', 'Contributivo'], ['#1E88E5', '#90CAF9'],
+                  _thousands(sum(vals)), 'afiliados', height)
+
+
+def donut_gender(row: pd.Series, color: str = '#26A69A', height: int = 280) -> go.Figure:
+    """Sex split in the Demográficos teal (mockup: hombres dark, mujeres light)."""
+    vals = [_n(row.get('pob_hombres')), _n(row.get('pob_mujeres'))]
+    return _donut(vals, ['Hombres', 'Mujeres'], [color, '#A7DCD6'], _thousands(sum(vals)),
+                  'habitantes', height)
 
 
 def bar_ethnic(row: pd.Series, title: str = 'Pertenencia étnica') -> go.Figure:
@@ -416,14 +393,15 @@ def map_municipios(geojson: dict, names: dict[str, str], mun_str: str | None,
     return fig
 
 
-def ring_pct(value: float | None, color: str = '#1E88E5', label: str = '') -> go.Figure:
+def ring_pct(value: float | None, color: str = '#1E88E5', label: str = '', height: int = 230) -> go.Figure:
     """Coverage ring: share filled, value in the centre (FCT Aseguramiento)."""
     v = max(0.0, min(100.0, _n(value)))
     fig = go.Figure(go.Pie(values=[v, 100 - v], hole=0.78, sort=False, direction='clockwise',
                            marker={'colors': [color, '#E3E8EC']}, textinfo='none',
                            hoverinfo='skip'))
     txt = 'N/D' if _is_null(value) else f'{v:,.1f}%'.replace('.', ',')
-    fig.update_layout(showlegend=False, height=230, margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
+    fig.update_layout(showlegend=False, height=height, margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
+                      paper_bgcolor='rgba(0,0,0,0)',
                       annotations=[{'text': f'<b>{txt}</b><br><span style="font-size:11px">{label}</span>',
                                     'showarrow': False, 'font': {'size': 26, 'color': color}}])
     return fig
@@ -438,7 +416,7 @@ def sparkline(x: list, y: list, color: str = '#26A69A') -> go.Figure:
     return fig
 
 
-def pyramid_regimen(df: pd.DataFrame) -> go.Figure:
+def pyramid_regimen(df: pd.DataFrame, height: int = 360) -> go.Figure:
     """Affiliated-population pyramid: subsidised to the left, contributory to the
     right (FCT Aseguramiento), one bar per age group, split by sex."""
     fig = go.Figure()
@@ -455,7 +433,8 @@ def pyramid_regimen(df: pd.DataFrame) -> go.Figure:
                     customdata=vals, hovertemplate='%{y}: %{customdata:,.0f}<extra>%{fullData.name}</extra>')
     m = df.groupby(['regimen', 'grupo_edad'])['afiliados'].sum().max()
     ticks = [-m, -m / 2, 0, m / 2, m]
-    fig.update_layout(barmode='relative', height=360, bargap=0.12, plot_bgcolor='white',
+    fig.update_layout(barmode='relative', height=height, bargap=0.12, plot_bgcolor='rgba(0,0,0,0)',
+                      paper_bgcolor='rgba(0,0,0,0)',
                       margin={'t': 10, 'b': 10, 'l': 10, 'r': 10},
                       legend={'orientation': 'h', 'y': -0.12, 'font': {'size': 11}},
                       # symmetric around 0, so the two regimes read as one pyramid

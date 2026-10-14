@@ -5,7 +5,7 @@ import streamlit as st
 
 from charts import donut_ips
 from registry import CAPACIDAD, IPS_INTERV, PRESTACION, Indicator
-from ui import card_grid, footer, kpi_card, module_header, pending_card, _v
+from ui import CARD_H, card_grid, chart, footer, kpi_card, module_header, panel, pending_card, _v
 
 sel = st.session_state['sel']
 row = sel.entity_row
@@ -18,10 +18,9 @@ notes = {ind.key: f'{_v(row, ind.col) / total * 100:.1f}% del total'.replace('.'
 notes['ips_total'] = 'IPS habilitadas (REPS)'
 card_grid('prestacion', PRESTACION, row, None, per_row=4, notes=notes)
 
-st.markdown('#### Capacidad instalada')
-card_grid('prestacion', CAPACIDAD, row, None, per_row=5)
-st.caption('Capacidad reportada por las IPS habilitadas en el REPS. UCI pediátricas no incluye '
-           'cuidado intensivo neonatal.')
+with panel('prestacion', 'Capacidad instalada', 'bed',
+           'Reportada por las IPS habilitadas en el REPS. UCI pediátricas no incluye cuidado intensivo neonatal.'):
+    card_grid('prestacion', CAPACIDAD, row, None, per_row=5)
 
 c_interv, c_estado, c_red = st.columns([1, 1, 2])
 with c_interv:
@@ -33,10 +32,8 @@ with c_estado:
         pending='El listado público solo indica "Intervención forzosa": el estado '
                 '(en intervención, programa, medida especial, finalizada) lo debe suministrar Supersalud.'))
 with c_red:
-    with st.container(border=True, key='card-prestacion-red'):
-        st.markdown(':material/pie_chart: <span class="fct-label">Composición de la red de IPS</span>',
-                    unsafe_allow_html=True)
-        st.plotly_chart(donut_ips(row), use_container_width=True)
+    with panel('prestacion', 'Composición de la red de IPS', 'pie_chart'):
+        chart(donut_ips(row, height=CARD_H - 60), key='donut-ips')
 
 footer('Los indicadores permiten monitorear la oferta, capacidad instalada y estado de la red de '
        'prestadores de servicios de salud.', ['reps', 'supersalud'])

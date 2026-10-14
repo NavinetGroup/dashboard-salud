@@ -3,10 +3,10 @@
 
 import streamlit as st
 
-from charts import pyramid_regimen, ring_pct, sparkline
+from charts import pyramid_regimen, ring_pct
 from data import get_monthly_series, get_piramide
 from registry import MODULES, SISBEN, get
-from ui import footer, kpi_card, module_header, trend_md, _v
+from ui import chart, footer, kpi_card, module_header, panel, trend_md, _v
 
 sel = st.session_state['sel']
 color = MODULES['aseguramiento'][1]
@@ -25,50 +25,38 @@ for col, ind in zip(st.columns(6), top):
         kpi_card('aseguramiento', ind, r, p, note)
 
 c_ring, c_pyr = st.columns([2, 3])
-with c_ring:
-    with st.container(border=True, key='card-aseguramiento-cobertura-ring'):
-        ind = get('cobertura')
-        st.markdown(f':material/{ind.icon}: <span class="fct-label">{ind.label} (%)</span>',
-                    unsafe_allow_html=True)
-        st.plotly_chart(ring_pct(_v(row, ind.col), color, 'afiliados / población'),
-                        use_container_width=True)
-        st.markdown(trend_md(ind, _v(row, ind.col), _v(prev, ind.col), _v(prev, ind.period_col),
-                             _v(row, ind.period_col))
-                    + f'<div class="fct-period">Datos: {_v(row, ind.period_col) or "N/D"} · '
-                      'MinSalud limita la cobertura municipal a 100%</div>',
-                    unsafe_allow_html=True)
+with c_ring, panel('aseguramiento', 'Cobertura de afiliación', 'verified'):
+    ind = get('cobertura')
+    chart(ring_pct(_v(row, ind.col), color, 'afiliados / población', height=262), key='ring')
+    st.markdown(trend_md(ind, _v(row, ind.col), _v(prev, ind.col), _v(prev, ind.period_col),
+                         _v(row, ind.period_col))
+                + f'<div class="fct-panel-sub" style="margin-top:6px">Datos: {_v(row, ind.period_col) or "N/D"}'
+                  ' · MinSalud limita la cobertura municipal a 100 %</div>', unsafe_allow_html=True)
 with c_pyr:
     level = 'municipio' if sel.use_mun else 'departamento'
     pyr = get_piramide(level, sel.mun_code if sel.use_mun else sel.dept_code)
-    with st.container(border=True, key='card-aseguramiento-piramide'):
-        st.markdown(':material/stacked_bar_chart: <span class="fct-label">Pirámide poblacional '
-                    'afiliada</span>', unsafe_allow_html=True)
+    with panel('aseguramiento', 'Pirámide poblacional afiliada', 'stacked_bar_chart'):
         if pyr.empty:
             st.caption('Sin datos BDUA para esta entidad.')
         else:
             tot = pyr.groupby('regimen')['afiliados'].sum()
-            st.plotly_chart(pyramid_regimen(pyr), use_container_width=True, key='piramide')
+            chart(pyramid_regimen(pyr, height=300), key='piramide')
             st.markdown(
-                f'<div class="fct-period">Subsidiado {tot.get("subsidiado", 0):,.0f} · '
+                f'<div class="fct-panel-sub" style="margin-top:6px">Subsidiado {tot.get("subsidiado", 0):,.0f} · '
                 f'Contributivo {tot.get("contributivo", 0):,.0f} afiliados · BDUA con corte '
                 f'{str(pyr["fecha_corte"].iloc[0])[:10]}</div>'.replace(',', '.'), unsafe_allow_html=True)
 
-st.markdown('#### Afiliados al régimen subsidiado sin Sisbén IV')
-code = sel.mun_code if sel.use_mun else sel.dept_code
-level = 'municipio' if sel.use_mun else 'departamento'
-series = get_monthly_series(level, tuple(i.col for i in SISBEN), code)
-subs = _v(row, 'afiliados_subsidiado')
-for col, ind in zip(st.columns(4), SISBEN):
-    with col:
-        v = _v(row, ind.col)
-        share = f'{v / subs * 100:.1f}% del régimen subsidiado'.replace('.', ',') if v is not None and subs else ''
-        kpi_card('aseguramiento', ind, row, prev, share)
-        if not series.empty and series[ind.col].notna().sum() > 1:
-            s = series.dropna(subset=[ind.col])
-            st.plotly_chart(sparkline((s['mes'].str[:3] + ' ' + s['anio'].astype(str)).tolist(),
-                                      s[ind.col].tolist(), color),
-                            use_container_width=True, config={'displayModeBar': False},
-                            key=f'spark-{ind.key}')
+with panel('aseguramiento', 'Afiliados al régimen subsidiado sin Sisbén IV', 'badge',
+           'Porcentaje sobre el total de afiliados al régimen subsidiado; la línea muestra la evolución mensual'):
+    code = sel.mun_code if sel.use_mun else sel.dept_code
+    series = get_monthly_series(level, tuple(i.col for i in SISBEN), code)
+    subs = _v(row, 'afiliados_subsidiado')
+    for col, ind in zip(st.columns(4), SISBEN):
+        with col:
+            v = _v(row, ind.col)
+            share = f'{v / subs * 100:.1f}% del régimen subsidiado'.replace('.', ',') if v is not None and subs else ''
+            spark = series[ind.col].dropna().tolist() if not series.empty and ind.col in series else None
+            kpi_card('aseguramiento', ind, row, prev, share, spark=spark)
 
 footer('Los indicadores permiten monitorear la cobertura, distribución y características de la '
        'afiliación al Sistema General de Seguridad Social en Salud en el territorio.', ['bdua', 'supersalud'])
