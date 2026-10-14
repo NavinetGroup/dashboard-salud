@@ -23,10 +23,11 @@ import argparse
 import faulthandler
 import logging
 import os
-import shutil
 import sys
 import traceback
 from pathlib import Path
+
+import duckdb
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
@@ -102,13 +103,27 @@ def _safe(fn, name: str) -> bool:
 # only then is it moved over the live DB in one atomic rename. A failed run
 # never leaves the dashboard reading a half-built or unchecked database.
 
+_HISTORY_TABLES = ('_carga_log', '_calidad_resultados')
+
+
 def _transform_step(base_dir: str) -> None:
-    # Start from the live DB so the history tables (_carga_log,
-    # _calidad_resultados) carry over; transform rebuilds everything else.
+    # Every build starts from an empty database, so tables of retired sources
+    # never linger; only the history tables (load log, quality results) are
+    # carried over from the live DB. transform rebuilds everything else.
     BUILD_DB.unlink(missing_ok=True)
     Path(f'{BUILD_DB}.wal').unlink(missing_ok=True)
     if LIVE_DB.exists():
-        shutil.copy2(LIVE_DB, BUILD_DB)
+        con = duckdb.connect(str(BUILD_DB))
+        try:
+            con.execute(f"ATTACH '{LIVE_DB.as_posix()}' AS live (READ_ONLY)")
+            have = {r[0] for r in con.execute(
+                "SELECT table_name FROM duckdb_tables() WHERE database_name = 'live'").fetchall()}
+            for t in _HISTORY_TABLES:
+                if t in have:
+                    con.execute(f'CREATE TABLE {t} AS SELECT * FROM live.{t}')
+            con.execute('DETACH live')
+        finally:
+            con.close()
     transform.run(base_dir, db_path=BUILD_DB)
 
 
