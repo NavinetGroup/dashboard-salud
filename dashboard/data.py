@@ -11,55 +11,124 @@ import duckdb
 import pandas as pd
 import streamlit as st
 
-# INFORME_DB_PATH env var lets corporate deployments keep the duckdb
-# outside the app folder so it survives code upgrades.
-DB = Path(os.environ.get('INFORME_DB_PATH',
-          str(Path(__file__).parent.parent / 'data' / 'informe_regional.duckdb')))
-DB_URL = os.environ.get(
-    'DB_RELEASE_URL',
-    'https://github.com/NavinetGroup/dashboard-salud/releases/download/data-v1/informe_regional.duckdb')
-# Optional: the SHA-256 published with the release; when set, a download that
-# doesn't match is rejected instead of being served.
-DB_SHA256 = os.environ.get('DB_SHA256', '').strip().lower()
+# ── Where the data comes from ────────────────────────────────────────────────
+# 1. INFORME_DB_PATH: an explicit file, used as is (never updated).
+# 2. The processing machine: the pipeline's own database in data/ — the
+#    operator always sees the build they just made.
+# 3. The viewer (everyone else): data/informe_regional_visor.duckdb, kept up to
+#    date on start-up by
+#      B  automatic: the manifest of the latest GitHub release says which
+#         version is published; a newer one is downloaded, its SHA-256 checked,
+#         and swapped in atomically;
+#      A  manual fallback: a newer viewer database dropped in data/actualizacion/
+#         (copied from a USB stick, an email, SharePoint…) is installed the same way.
+#    Without internet the current copy keeps working.
+_APP_ROOT = Path(__file__).parent.parent
+_DATA_DIR = Path(os.environ.get('INFORME_DATA_DIR', str(_APP_ROOT / 'data')))
+_PIPELINE_DB = _APP_ROOT / 'data' / 'informe_regional.duckdb'
+VIEWER_DB = _DATA_DIR / 'informe_regional_visor.duckdb'
+DROP_DIR = _DATA_DIR / 'actualizacion'
+GITHUB_REPO = os.environ.get('INFORME_GITHUB_REPO', 'NavinetGroup/dashboard-salud')
+RELEASE_URL = os.environ.get('INFORME_RELEASE_URL',
+                             f'https://github.com/{GITHUB_REPO}/releases/latest/download')
 # DANE Marco Geoestadístico Nacional, simplified (tools/build_geojson.py)
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
 GEOJSON_MPIOS_PATH = Path(__file__).parent / 'colombia_mpios.geojson'
 
 
-def _download_db() -> None:
-    """Fetch the release DB atomically: write to .part, verify, then rename.
+def _db_version(path: Path) -> str:
+    """Version stamp of a viewer database ('' if missing or not one)."""
+    try:
+        con = duckdb.connect(str(path), read_only=True)
+        try:
+            row = con.execute("SELECT valor FROM _visor_info WHERE clave = 'version'").fetchone()
+            ok = con.execute("SELECT COUNT(*) FROM duckdb_tables() "
+                             "WHERE table_name = 'metricas_nacional_periodo'").fetchone()[0]
+            return row[0] if row and ok else ''
+        finally:
+            con.close()
+    except Exception:
+        return ''
 
-    A plain urlretrieve to the final path left a truncated file after an
-    interrupted download, which DB.exists() then accepted on every restart.
-    """
-    part = DB.with_name(DB.name + '.part')
+
+def _install(candidate: Path) -> bool:
+    """Swap a verified newer viewer database into place (atomic rename)."""
+    new, cur = _db_version(candidate), _db_version(VIEWER_DB) if VIEWER_DB.exists() else ''
+    if not new or new <= cur:
+        return False
+    os.replace(candidate, VIEWER_DB)
+    return True
+
+
+def _from_drop_folder() -> str:
+    """A: newest valid database dropped in data/actualizacion/ ('' if none newer)."""
+    if not DROP_DIR.exists():
+        return ''
+    for f in sorted(DROP_DIR.glob('*.duckdb'), key=lambda p: _db_version(p), reverse=True):
+        staged = VIEWER_DB.with_name(VIEWER_DB.name + '.part')
+        staged.unlink(missing_ok=True)
+        staged.write_bytes(f.read_bytes())
+        if _install(staged):
+            f.unlink(missing_ok=True)
+            return _db_version(VIEWER_DB)
+        staged.unlink(missing_ok=True)
+    return ''
+
+
+def _from_release() -> str:
+    """B: download the latest published version if it is newer ('' if not)."""
+    with urllib.request.urlopen(f'{RELEASE_URL}/manifest.json', timeout=8) as resp:
+        manifest = json.loads(resp.read().decode('utf-8'))
+    current = _db_version(VIEWER_DB) if VIEWER_DB.exists() else ''
+    if manifest.get('version', '') <= current:
+        return ''
+    part = VIEWER_DB.with_name(VIEWER_DB.name + '.part')
     digest = hashlib.sha256()
     try:
-        with urllib.request.urlopen(DB_URL, timeout=60) as resp, open(part, 'wb') as out:
+        with urllib.request.urlopen(f"{RELEASE_URL}/{manifest['archivo']}", timeout=60) as resp,                 open(part, 'wb') as out:
             while chunk := resp.read(1 << 20):
                 digest.update(chunk)
                 out.write(chunk)
-        if DB_SHA256 and digest.hexdigest() != DB_SHA256:
-            raise RuntimeError(f'SHA-256 no coincide ({digest.hexdigest()[:12]}… ≠ {DB_SHA256[:12]}…)')
-        duckdb.connect(str(part), read_only=True).close()   # must be a readable DuckDB file
-        os.replace(part, DB)
+        if digest.hexdigest() != manifest.get('sha256', '').lower():
+            raise RuntimeError('la descarga no coincide con el SHA-256 publicado')
+        return manifest['version'] if _install(part) else ''
     finally:
         part.unlink(missing_ok=True)
 
 
-@st.cache_resource(show_spinner=False)
+@st.cache_resource(show_spinner=False, ttl=6 * 3600)
 def _ensure_db() -> str:
-    if not DB.exists():
-        if not os.access(DB.parent if DB.parent.exists() else DB.parent.parent, os.W_OK):
-            # Production mounts the pipeline's data/ read-only: the DB must come from
-            # the pipeline, never from a download inside the container.
-            st.error(f'No existe la base de datos {DB}. Ejecute el pipeline '
-                     '(pipeline/runner.py) para generarla y recargue.')
-            st.stop()
-        DB.parent.mkdir(parents=True, exist_ok=True)
-        with st.spinner('Descargando base de datos (solo primera carga)...'):
-            _download_db()
-    return str(DB)
+    """Path of the database to read, updating the viewer copy first (see above).
+    Cached for 6 h, so a long-running app also picks up the monthly release."""
+    explicit = os.environ.get('INFORME_DB_PATH')
+    if explicit:
+        return explicit
+    if _PIPELINE_DB.exists():
+        return str(_PIPELINE_DB)
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+    updated = _from_drop_folder()
+    try:
+        with st.spinner('Buscando una versión más reciente de los datos…'):
+            updated = _from_release() or updated
+    except Exception as e:   # offline, GitHub unreachable, bad file: keep what we have
+        st.session_state['_update_error'] = str(e)
+    if updated:
+        st.cache_data.clear()
+        st.toast(f'Datos actualizados a la versión {updated}', icon=':material/download_done:')
+    if not VIEWER_DB.exists():
+        st.error('No hay datos para mostrar todavía.')
+        st.markdown(
+            '- **Automático:** conecte el equipo a internet y recargue la página; la aplicación '
+            'descargará la última versión publicada.\n'
+            '- **Manual:** copie el archivo `informe_regional_visor.duckdb` que le compartieron en '
+            f'la carpeta `{DROP_DIR}` y recargue.')
+        st.stop()
+    return str(VIEWER_DB)
+
+
+def data_version() -> str:
+    """Version stamp shown in the sidebar ('' for the pipeline's own database)."""
+    return _db_version(Path(_ensure_db()))
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
@@ -148,36 +217,36 @@ def load_geojson_vecinos(mun_code: int, margin: float = 0.02) -> dict:
 # Period discovery
 # ---------------------------------------------------------------------------
 
+# The selectors offer exactly the (year, month) grid the pipeline computed:
+# metricas_nacional_periodo holds one row per period (mes_filtro NULL = latest
+# in the year). Reading it, not the raw source tables, lets the viewer run on
+# the slim database (pipeline/exportar.py), which has no raw tables.
+
 @st.cache_data(ttl=3600)
 def get_available_years() -> list[int]:
-    """Return sorted-descending list of years present across main sources."""
+    """Years offered by the selector, newest first."""
     con = _connect()
-    years: set[int] = set()
-    for t in ('afiliacion', 'irca', 'ins_dengue', 'ins_mortalidad_materna'):
-        try:
-            rs = con.execute(f'SELECT DISTINCT anio FROM {t} WHERE anio IS NOT NULL').fetchall()
-            years |= {int(r[0]) for r in rs}
-        except Exception:
-            pass
-    con.close()
-    return sorted(years, reverse=True)
+    try:
+        if not _has_table(con, 'metricas_nacional_periodo'):
+            return []
+        rs = con.execute('SELECT DISTINCT anio_filtro FROM metricas_nacional_periodo').fetchall()
+        return sorted((int(r[0]) for r in rs if r[0] is not None), reverse=True)
+    finally:
+        con.close()
 
 
 @st.cache_data(ttl=3600)
 def get_available_months(year: int) -> list[str]:
-    """Return months (uppercase Spanish) available in afiliacion for a given year."""
+    """Months (Spanish, upper case) offered for a year, in calendar order."""
     con = _connect()
     try:
-        rs = con.execute(
-            "SELECT DISTINCT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? AND mes IS NOT NULL",
-            [year],
-        ).fetchall()
-        months = [r[0] for r in rs if r[0] in _MES_ORDER]
-        months.sort(key=lambda m: _MES_ORDER.get(m, 99))
-    except Exception:
-        months = []
-    con.close()
-    return months
+        if not _has_table(con, 'metricas_nacional_periodo'):
+            return []
+        rs = con.execute('SELECT DISTINCT mes_filtro FROM metricas_nacional_periodo '
+                         'WHERE anio_filtro = ? AND mes_filtro IS NOT NULL', [int(year)]).fetchall()
+        return sorted((r[0] for r in rs if r[0] in _MES_ORDER), key=lambda m: _MES_ORDER[m])
+    finally:
+        con.close()
 
 
 # ---------------------------------------------------------------------------
@@ -215,10 +284,16 @@ def _metrics(level: str, year: int | None, month: str | None,
             ).df()
             if not df.empty:
                 return df
-        # Latest data (also the fallback for a DB built before the period tables existed)
+        # Latest data: the full pipeline DB has the v_metricas_* views; the slim
+        # viewer DB only has the period tables (latest year, mes_filtro NULL).
+        if _has_table(con, f'v_metricas_{level}'):
+            return con.execute(
+                f"SELECT * FROM v_metricas_{level} WHERE TRUE {dep_sql} ORDER BY {order}", params
+            ).df()
         return con.execute(
-            f"SELECT * FROM v_metricas_{level} WHERE TRUE {dep_sql} ORDER BY {order}", params
-        ).df()
+            f"SELECT * EXCLUDE (anio_filtro, mes_filtro) FROM {table} "
+            f"WHERE anio_filtro = (SELECT MAX(anio_filtro) FROM {table}) AND mes_filtro IS NULL "
+            f"{dep_sql} ORDER BY {order}", params).df()
     finally:
         con.close()
 

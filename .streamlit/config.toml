@@ -6,3 +6,7 @@ primaryColor = "#0B5D5E"
 backgroundColor = "#FFFFFF"
 secondaryBackgroundColor = "#F2F6F7"
 textColor = "#263238"
+
+[client]
+# Hide the developer menu ("Deploy", rerun settings): this is an end-user app
+toolbarMode = "minimal"

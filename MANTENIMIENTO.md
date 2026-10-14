@@ -1,22 +1,48 @@
 # Mantenimiento — Informe Regional de Salud
 
-Runbook operacional para mantener el dashboard actualizado. Está pensado para una sola persona ejecutando ~30 min al mes.
+Guía del **equipo que procesa los datos** (operador). Los usuarios del tablero no hacen nada de esto: su
+aplicación se actualiza sola (ver README).
+
+Todo el procesamiento ocurre en este equipo. El resultado es una base pequeña para el visor
+(`data/dist/informe_regional_visor.duckdb`, unos 14 MB) que se publica en una release de GitHub; cada
+tablero la descarga al abrirse.
 
 ---
 
-## 🗓️ Cadencia
+## Puesta en marcha (una sola vez)
 
-| Frecuencia | Acción |
+1. Instale Python 3.12 (python.org) y Google Chrome.
+2. Doble clic en **`Preparar equipo.bat`**: crea `.venv` e instala `requirements-pipeline.txt`.
+3. Para publicar: instale la GitHub CLI (https://cli.github.com) y ejecute `gh auth login` con una cuenta
+   con permiso de escritura en el repositorio.
+4. Opcional: copie `informe_regional.example.toml` como `informe_regional.toml` para cambiar la carpeta
+   de archivos manuales (por ejemplo, a la biblioteca de SharePoint sincronizada con OneDrive).
+5. Doble clic en **`Renovar sesion SIVICAP.bat`** (ver IRCA abajo).
+
+---
+
+## Cada mes
+
+| Paso | Cómo |
 |---|---|
-| **5 de cada mes** | Pipeline mensual (scrapers + transform) |
-| **15 de julio** | Pipeline anual (refresca proyecciones DANE) |
-| **Ad-hoc** | Re-publicar `informe_regional.duckdb` al GitHub Release cuando los datos cambien |
+| 1. IRCA | Si el mes anterior avisó que SIVICAP pidió login: **`Renovar sesion SIVICAP.bat`**, o deje el CSV a mano en la carpeta de manuales (ver abajo) |
+| 2. Procesar y publicar | Doble clic en **`Actualizar datos.bat`**: descarga todas las fuentes, controla la calidad, genera la base del visor y pregunta si publicarla |
+| 3. Verificar | `.venv\Scripts\python.exe -m streamlit run dashboard\app.py` muestra la base recién construida |
+
+`Actualizar datos.bat` termina con uno de tres resultados (código de salida del runner):
+
+- **0** — todo bien; se ofrece publicar.
+- **1** — alguna fuente falló (típicamente IRCA), pero la base se construyó, pasó los controles y se
+  puede publicar: los datos de esa fuente quedan del mes anterior.
+- **2** — la base nueva **no** se generó (fallo de transformación o de un control de calidad con nivel
+  ERROR). El tablero sigue con la versión anterior; revise el registro antes de reintentar.
+
+Una vez al año (después del 15 de julio, cuando el DANE publica proyecciones):
+`.venv\Scripts\python.exe -m pipeline.runner --annual`.
 
 ---
 
-## 🤖 Lo que es automático
-
-Estos scrapers descargan datos sin intervención humana:
+## Fuentes automáticas
 
 | Fuente | Endpoint |
 |---|---|
@@ -30,142 +56,99 @@ Estos scrapers descargan datos sin intervención humana:
 | INS SIVIGILA año en curso (preliminar) | Tablero público "006 Vigilancia Rutinaria" del INS (API pública de Power BI, sin login). Semanas completas hasta ~2 semanas atrás; se rotula "(preliminar)". Cuando el INS publique los microdatos finales de ese año, reemplazan automáticamente al preliminar. Si el control `frescura_sivigila_preliminar` avisa, revisar que el tablero siga existiendo con ese nombre |
 | CUIPO — ejecución presupuestal en salud (Financiamiento 1–7) | CGR en datos.gov.co, trimestral y acumulado en el año. Se baja un archivo por trimestre (`cuipo_salud_AAAAMM.parquet`) y solo se vuelve a bajar si la CGR actualizó los datasets. Si el control `cuipo_codigo_divipola` falla, apareció un municipio con código CGN `923…` nuevo: agregarlo en `_CGN_DIVIPOLA` (`scrapers/cuipo_scraper.py`). Bogotá y Norte de Santander usan su fondo/instituto de salud (`_FONDOS`) |
 | Cofinanciación del régimen subsidiado (Financiamiento 8) | Meta: matriz de continuidad del MSPS, página "matriz-continuidad" (se toma la versión más reciente de cada año). Ejecución: "Resultado LMA" de la ADRES, un Excel por mes que se descarga vía `/api/media`. Si cambian los encabezados del Excel, el scraper falla con un mensaje que nombra las columnas no reconocidas (`scrapers/cofinanciacion_scraper.py`) |
-| DANE — nacimientos y defunciones fetales (denominador de sífilis congénita) | Cuadros anuales de estadísticas vitales, por municipio de residencia de la madre. Solo se usan años completos, cuando el DANE publica cifras definitivas (~9 meses después). Mientras un año está en curso, se usa el último año completo, prorrateado a las semanas notificadas. Las tablas de 2023 son .xls protegidas y no se cargan (el dashboard no las necesita) |
+| DANE — nacimientos y defunciones fetales (denominador de sífilis congénita) | Cuadros anuales de estadísticas vitales, por municipio de residencia de la madre. Solo se usan años completos, cuando el DANE publica cifras definitivas (~9 meses después). Mientras un año está en curso, se usa el último año completo, prorrateado a las semanas notificadas. Las tablas de 2023 son .xls protegidas y no se cargan (el tablero no las necesita) |
 | INS — evaluación del desempeño de la VSP (Salud pública 10 y 11) | Excel trimestral en la biblioteca "Documentos compartidos" del Portal SIVIGILA. Primero sale PRELIMINAR y luego FINAL; el scraper usa el FINAL apenas existe. Datos por departamento y distrito; el resto de municipios muestra el valor de su departamento. Si el INS cambia el nombre de los archivos y el control `frescura_vsp` avisa, revisar el patrón de nombres en `scrapers/ins_vsp_scraper.py` |
 | SICODIS — asignaciones SGP salud (denominador de los indicadores SGP) | DNP, reporte nacional en Excel sin login. Años cerrados una vez; el año en curso en cada corrida |
 
-Para correr el ciclo completo:
+---
 
-```powershell
-cd "c:\dev\Informe regional v2"
-.venv\Scripts\python.exe pipeline\runner.py --run-now
-```
+## Archivos descargados a mano
 
-Toma ~25 minutos. El resultado: parquets nuevos en `data/parquet/` y tablas refrescadas en `data/informe_regional.duckdb`.
+Viven en la **carpeta de manuales**: `data/manual/` por defecto, o la que fije `informe_regional.toml`
+(`[rutas] manuales`) o la variable `INFORME_MANUAL_DIR`. Más adelante puede apuntar a la biblioteca de
+SharePoint sincronizada con OneDrive, sin cambiar código.
+
+| Subcarpeta | Qué dejar ahí | Qué pasa después |
+|---|---|---|
+| `irca/` | CSV "IRCA mensual por municipio" exportado de SIVICAP | Se carga y se mueve a `irca/procesados/` con la fecha, para no recargarlo |
+| `afiliacion/` | ZIP de cifras de afiliación del MSPS, cuando el sitio no lo entrega | Se usa para el mes que indica el nombre del archivo |
+
+### IRCA (SIVICAP)
+
+SIVICAP protege el inicio de sesión con un reCAPTCHA, que debe resolver una persona.
+
+- **Sesión guardada (recomendado):** **`Renovar sesion SIVICAP.bat`** abre Chrome con las credenciales de
+  invitado ya escritas; marque "No soy un robot", inicie sesión y presione ENTER en la ventana negra. La
+  sesión queda en `data/chrome_profile_sivicap/` y el scraper la reutiliza durante varias semanas.
+  Repítalo cuando el pipeline avise que SIVICAP pidió login.
+- **CSV a mano:** en https://sivicap.ins.gov.co (usuario invitado) → Reportes → IRCA mensual por
+  municipio → Exportar CSV, y guarde el archivo en `irca/` dentro de la carpeta de manuales.
 
 ---
 
-## 🖐️ Lo que requiere acción humana
+## Controles de calidad
 
-### 1. IRCA (calidad del agua INS) — 1 vez al mes
+Cada construcción termina con el paso **calidad** (`pipeline/quality.py`, unos 90 controles): llaves
+duplicadas, cruce de códigos DANE por fuente, rangos plausibles, frescura de cada fuente y saltos de
+filas frente a la carga anterior.
 
-El scraper de SIVICAP es rechazado por anti-bot. Dos opciones:
+- **ERROR** → la base nueva no se publica (código 2).
+- **WARN** → se informa al final; revisar, no bloquea.
 
-#### Opción A — Drop manual del CSV (rápido, una vez al mes)
+Para correrlos sobre la base actual: `.venv\Scripts\python.exe -m pipeline.quality`. El histórico queda
+en las tablas `_calidad_resultados` y `_carga_log`.
 
-1. Abre https://sivicap.ins.gov.co/SIVICAP/Account/Login en Chrome/Edge normal.
-2. Login: `invitado@ins.gov.co` / `123456` + resuelve el reCAPTCHA.
-3. Menú: **Reportes → SIVICAP → IRCA mensual por municipio**.
-4. Selecciona año/mes y haz clic en **Exportar CSV**.
-5. Copia el archivo descargado a `data/raw/irca_manual/`.
-6. Corre `python scrapers/irca_scraper.py` y luego `python pipeline/runner.py --transform-only`.
-   El scraper guarda el parquet con el último mes que contienen los datos y mueve el CSV a
-   `data/raw/irca_manual/procesados/`, para que no se vuelva a cargar el mes siguiente.
-
-Mientras no haya un CSV nuevo, el pipeline mensual intenta SIVICAP y, si el reCAPTCHA lo
-bloquea, la notificación llega como **CON FALLOS** indicando `irca_scraper`: es la señal
-para hacer esta descarga manual.
-
-#### Opción B — Sesión persistente (más esfuerzo inicial, automático por semanas)
-
-```powershell
-.venv\Scripts\python.exe tools\setup_sivicap_session.py
-```
-
-Abre una ventana visible de Chrome con credenciales pre-llenadas. Resuelves el reCAPTCHA UNA vez, presionas ENTER en la terminal. Las cookies persisten en `data/chrome_profile_sivicap/`. A partir de ahí, el scraper headless reutiliza la sesión durante 2-4 semanas hasta que el INS la invalide — y entonces vuelves a correr el setup.
-
-### 2. Desnutrición aguda 2026 — sin solución actual
-
-El INS migró la tabla geográfica del PDF a 3 imágenes PNG embebidas. No es extraíble con texto. Los datos 2025 siguen intactos en la DB. Opciones futuras:
-
-- **Google Cloud Vision API** (~$0.02/año) — extracción OCR con buena precisión
-- **Solicitud formal al INS** — vía portal de transparencia, respuesta en 10-15 días
-- **Aceptar** — datos 2026 nacionales (total país) sí están como texto en el PDF
+Cada construcción parte de una base vacía y solo conserva de la anterior esas dos tablas de histórico.
 
 ---
 
-## 📤 Publicar nueva versión del DB
+## Publicación y actualización de los tableros
 
-Cuando termines un ciclo de scraping y quieras que el dashboard online vea los datos nuevos:
+- `python -m pipeline.exportar` (lo hace el runner) escribe en `data/dist/` la base del visor y
+  `manifest.json` (versión, tamaño, SHA-256).
+- `python tools\publicar_datos.py` (lo ofrece `Actualizar datos.bat`) crea la release pública
+  `datos-<versión>` con esos dos archivos y la marca como la última.
+- Cada tablero, al abrirse (y cada 6 horas si queda abierto), lee `releases/latest/download/manifest.json`;
+  si la versión es más nueva que la suya, descarga la base, comprueba el SHA-256 y la reemplaza. Sin
+  internet sigue con la que tiene.
+- **Actualización manual (sin internet):** copie `data/dist/informe_regional_visor.duckdb` a la carpeta
+  `app\data\actualizacion\` del tablero del usuario (USB, correo, SharePoint) y que lo vuelva a abrir.
 
-```powershell
-# Sube el DB actualizado al GitHub Release
-gh release upload data-v1 data/informe_regional.duckdb --repo NavinetGroup/dashboard-salud --clobber
-```
+## Versión portable del tablero
 
-Luego, **abre Hugging Face Space → Settings → "Factory rebuild"** para que el contenedor descargue el DB nuevo. (Un "Restart" simple no basta — conserva el caché.)
-
----
-
-## 🧪 Verificar antes de publicar
-
-Cada `transform` termina con el paso **calidad** (`pipeline/quality.py`), unos 45 controles automáticos:
-llaves duplicadas, % de filas con código de municipio por fuente, población étnica vs. total,
-meses de afiliación con totales idénticos (mes re-etiquetado), rangos plausibles de tasas,
-frescura de cada fuente y saltos de filas frente a la carga anterior.
-
-- **ERROR** → el paso `calidad` falla, el runner sale con código 1 y la notificación llega como
-  **CON FALLOS**. No publicar el DB hasta entenderlo.
-- **WARN** → aparece al final de la notificación (p. ej. fuente atrasada). Revisar, no bloquea.
-
-```powershell
-# Correr solo los controles sobre el DB actual
-.venv\Scripts\python.exe pipeline\quality.py
-```
-
-El histórico queda en las tablas `_calidad_resultados` y `_carga_log` del DB.
-
-```powershell
-# Levanta el dashboard local
-.venv\Scripts\python.exe -m streamlit run dashboard\app.py
-# Abre http://localhost:8501 y revisa que las fechas/cifras se vean correctas
-```
-
-Si algo se ve raro, mira los logs:
-```powershell
-ls logs\run_*.log | sort -descending | select -first 1 | %{ Get-Content $_.FullName -Tail 100 }
-```
+`.venv\Scripts\python.exe tools\build_portable.py` genera `dist/InformeRegional/` y
+`dist/InformeRegional_<versión>.zip` (unos 110 MB): Python embebido, los 6 paquetes del visor (en las
+mismas versiones del entorno probado), el tablero y la base actual. Se entrega el zip; el usuario lo
+descomprime y abre **`Abrir Informe Regional.bat`**, que elige un puerto libre y abre el navegador.
+Solo hace falta un zip nuevo cuando cambia el **código** del tablero; los datos se actualizan solos.
 
 ---
 
-## 🔄 Workflow git completo cada actualización
+## Cartografía (mapas de Localización)
 
-```powershell
-git add data/parquet  # opcional, los parquets están en .gitignore por default
-git add scrapers/ pipeline/ README.md MANTENIMIENTO.md
-git commit -m "Actualización mensual <YYYY-MM>"
-git push origin main
-gh release upload data-v1 data/informe_regional.duckdb --repo NavinetGroup/dashboard-salud --clobber
-# → luego Factory rebuild en HF Space
-```
+Los mapas usan `dashboard/colombia_dptos.geojson` y `dashboard/colombia_mpios.geojson`, generados a partir
+del Marco Geoestadístico Nacional del DANE (servicio público, sin login). No los actualiza el pipeline.
+Cuando el DANE publique un MGN nuevo (por ejemplo, porque se creó un municipio):
+`.venv\Scripts\python.exe tools\build_geojson.py --year 2026`.
 
 ---
 
-## 🗺️ Cartografía (mapas de Localización)
-
-Los mapas usan `dashboard/colombia_dptos.geojson` y `dashboard/colombia_mpios.geojson`, generados a partir del Marco Geoestadístico Nacional del DANE (servicio público, sin login). No los actualiza el pipeline. Cuando el DANE publique un MGN nuevo (por ejemplo, porque se creó un municipio):
-
-```bash
-python tools/build_geojson.py --year 2026
-```
-
-Los mapas se dibujan sin fondo de teselas, así que no dependen de ningún servidor externo ni de una API key, y funcionan sin conexión.
-
-## 🆘 Troubleshooting
+## Problemas frecuentes
 
 | Síntoma | Causa probable | Acción |
 |---|---|---|
-| `SessionNotCreatedException: ChromeDriver only supports Chrome version X` | El driver cacheado está desfasado | Borra `%APPDATA%\undetected_chromedriver\` y re-corre |
-| `SIVICAP: login fallido — sigue en la página de login` | Anti-bot rechazó la sesión headless | Usa Opción A (manual) u Opción B (perfil persistente) |
-| `INS [<evento>] PE_X_YYYY: no se encontraron tablas válidas` | INS cambió el layout del PDF | Revisar manualmente el PDF; si es desnutrición, ver sección de limitaciones |
-| `HTTP 401` en SuperSalud | URL del Excel cambió | Buscar el nuevo nombre vía SharePoint REST API y actualizar `URL_IPS_XLSX`/`URL_EPS_XLSX` en `scrapers/supersalud_scraper.py` |
-| HF Space muestra datos viejos | DB en caché | Settings → Factory rebuild |
+| `SessionNotCreatedException: ChromeDriver only supports Chrome version X` | El driver cacheado está desfasado | Borre `%APPDATA%\undetected_chromedriver\` y reintente |
+| `irca: SIVICAP no entregó datos (probable reCAPTCHA)` | La sesión guardada venció | `Renovar sesion SIVICAP.bat`, o CSV a mano |
+| `INS [<evento>] PE_X_YYYY: no se encontraron tablas válidas` | El INS cambió el formato del PDF | Revisar el PDF; el tablero usa SIVIGILA y solo cae al PDF si falta |
+| `HTTP 401` en Supersalud | Cambió la URL del Excel | Actualizar `URL_IPS_XLSX` / `URL_EPS_XLSX` en `scrapers/supersalud_scraper.py` |
+| `publicar_datos.py`: falta `gh` o permiso | GitHub CLI no instalada o sin sesión | Instalarla y `gh auth login` |
+| Un tablero no se actualiza | Sin internet, o GitHub bloqueado en la red | Actualización manual (ver arriba) |
 
 ---
 
-## 📚 Referencias
+## Referencias
 
-- Arquitectura técnica completa: [docs/WEBSCRAPING_GUIDE.md](docs/WEBSCRAPING_GUIDE.md)
-- Definiciones de indicadores: [docs/INDICADORES_FUENTES.md](docs/INDICADORES_FUENTES.md)
-- Contexto histórico inicial: [docs/archive/CONTEXTO_INICIAL_20250101.md](docs/archive/CONTEXTO_INICIAL_20250101.md)
-- Mapeo KPIs ↔ fuentes (referencia personal): [docs/reference/informe_regional_kpis_fuentes.xlsx](docs/reference/informe_regional_kpis_fuentes.xlsx)
+- Fuentes por indicador y su investigación: [docs/FUENTES_INVESTIGACION_2026-10-13.md](docs/FUENTES_INVESTIGACION_2026-10-13.md)
+- Fórmulas de Financiamiento (pendientes de validación): [docs/FINANCIAMIENTO_FORMULAS.md](docs/FINANCIAMIENTO_FORMULAS.md)
+- Plan del diseño FCT: [docs/PLAN_FCT_2026-10.md](docs/PLAN_FCT_2026-10.md)
+- Auditoría del código (octubre 2026): [docs/AUDITORIA_2026-10-13.md](docs/AUDITORIA_2026-10-13.md)

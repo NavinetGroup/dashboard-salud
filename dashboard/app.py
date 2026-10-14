@@ -12,6 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from data import data_version
 from selection import sidebar
 from ui import inject_css
 
@@ -24,6 +25,9 @@ if _LOGO.exists():
 
 inject_css()
 st.session_state['sel'] = sidebar()
+_version = data_version()
+if _version:   # viewer database: say which published version is on screen
+    st.sidebar.caption(f'Datos: versión {_version}')
 
 pages = {
     '': [

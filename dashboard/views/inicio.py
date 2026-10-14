@@ -12,9 +12,11 @@ sel = st.session_state['sel']
 
 st.markdown(
     '<div class="fct-header" style="background:linear-gradient(90deg,#0B5D5E,#26A69A)">'
+    '<span class="hico">health_and_safety</span><div>'
     '<h1>INFORME REGIONAL DE SALUD</h1>'
     '<p>Caracterización del sistema de salud por departamento y municipio</p>'
-    f'<div class="fct-crumb">{html.escape(sel.entity_name)} · {html.escape(sel.period_label)}</div></div>',
+    f'<div class="fct-crumb">{html.escape(sel.entity_name)} · {html.escape(sel.period_label)}</div></div>'
+    '<span class="deco">monitoring</span></div>',
     unsafe_allow_html=True)
 
 PAGES = {

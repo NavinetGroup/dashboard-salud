@@ -49,6 +49,7 @@ import scrapers.ins_vsp_scraper as ins_vsp
 import scrapers.ins_pdf_scraper as ins_pdf
 import pipeline.transform as transform
 import pipeline.quality as quality
+import pipeline.exportar as exportar
 from scrapers.errors import ScrapeError
 from pipeline.quality import QualityError
 
@@ -140,10 +141,16 @@ def _publish_step(base_dir: str) -> None:
     log.info(f'DB publicado: {LIVE_DB}')
 
 
+def _export_step(base_dir: str) -> None:
+    # Slim copy for the viewer app (data/dist/), ready for tools/publicar_datos.py
+    exportar.run(base_dir, db_path=LIVE_DB)
+
+
 _BUILD_AND_PUBLISH = [
     (_transform_step, 'transform'),
     (_quality_step, 'calidad'),
     (_publish_step, 'publicar'),
+    (_export_step, 'exportar'),
 ]
 
 
@@ -157,6 +164,9 @@ def _run_steps(title: str, steps: list[tuple]) -> int:
     log.info(f'=== {title} ===')
     results: dict[str, bool] = {}
     for fn, name in steps:
+        if name == 'exportar' and not results.get('publicar', True):
+            results[name] = False   # nothing new to export
+            continue
         if name == 'publicar' and not all(results.get(s, True) for s in _BUILD_STEPS):
             log.error('!!! Falló publicar: omitido — el DB nuevo no pasó transform/calidad; '
                       f'se conserva el DB anterior. Build para inspección: {BUILD_DB}')
