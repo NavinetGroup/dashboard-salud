@@ -184,9 +184,6 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     # the capital-city entries in DEPT_ALIASES resolve those.
     ('supersalud_ips_intervenidas', 'departamento', None,       False, None),
     ('supersalud_eps_intervenidas', 'departamento', None,       False, None),
-    # DIFT18: dept uses name column; mun already has integer DANE codes
-    ('dift18_departamento',         'entidad_territorial', None, False, None),
-    ('dift18_municipio',            'codigo_dep',  'codigo_mun', True,  None),
 ]
 
 

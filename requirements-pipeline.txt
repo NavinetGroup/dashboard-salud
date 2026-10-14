@@ -1,0 +1,15 @@
+# Data pipeline (runs on the processing machine only, never in the viewer).
+# The dashboard's own packages come first; then what the scrapers and the
+# transform import directly. Pinned to the versions the pipeline is tested with.
+-r requirements.txt
+polars==1.40.1
+fastexcel==0.20.1          # polars.read_excel(engine='calamine')
+openpyxl==3.1.5
+requests==2.33.1
+APScheduler==3.11.2        # pipeline/runner.py scheduled mode
+selenium==4.43.0           # REPS / SIVICAP (IRCA)
+undetected-chromedriver==3.5.5
+setuptools==82.0.1         # undetected-chromedriver imports distutils (removed in Python 3.12)
+pdfplumber==0.11.9         # INS PDF bulletins
+pdf2image==1.17.0          # INS PDF: OCR fallback (needs Poppler + Tesseract installed)
+pytesseract==0.3.13

@@ -18,7 +18,7 @@ CARD_H = 262          # px: every KPI card, so cards in a row and across rows li
 
 
 _SIDEBAR_BG = 'linear-gradient(180deg, #0B5D5E 0%, #084A4B 100%)'
-_NAV_EXTRA = {'detallado': '#546E7A'}   # pages outside MODULES: their chip colour
+_NAV_EXTRA: dict[str, str] = {}   # pages outside MODULES: their chip colour
 
 
 def _sidebar_css() -> str:

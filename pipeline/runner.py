@@ -34,7 +34,6 @@ sys.path.insert(0, str(BASE_DIR))
 from apscheduler.schedulers.blocking import BlockingScheduler
 
 import scrapers.demografico as demografico
-# import scrapers.reps_ips_scraper as reps_ips  # legacy — use reps_scraper instead
 import scrapers.reps_scraper as reps           # multi-endpoint (all 6 REPS queries)
 import scrapers.irca_scraper as irca
 import scrapers.afiliacion_scraper as afiliacion
@@ -67,7 +66,7 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 
-# Exit codes for the one-shot modes (scripts/run_monthly_pipeline.sh relies on them)
+# Exit codes for the one-shot modes (the monthly update script relies on them)
 EXIT_OK = 0
 EXIT_PARTIAL = 1        # some scrapers failed; a new DB was still built, checked and published
 EXIT_NOT_PUBLISHED = 2  # transform, quality checks or publish failed; the live DB is unchanged

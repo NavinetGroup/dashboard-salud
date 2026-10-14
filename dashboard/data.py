@@ -180,61 +180,6 @@ def get_available_months(year: int) -> list[str]:
     return months
 
 
-@st.cache_data(ttl=3600)
-def get_source_periods() -> dict[str, str]:
-    """Return latest available reporting period label for each data source."""
-    con = _connect()
-    result: dict[str, str] = {}
-
-    def _latest_mes(table: str) -> str:
-        try:
-            r = con.execute(
-                f"SELECT anio, UPPER(TRIM(mes)) FROM {table} "
-                f"ORDER BY anio DESC, {_MES_CASE} DESC LIMIT 1"
-            ).fetchone()
-            return f"{r[1].capitalize()} {r[0]}" if r else 'N/D'
-        except Exception:
-            return 'N/D'
-
-    def _latest_pe(table: str) -> str:
-        try:
-            r = con.execute(
-                f"SELECT anio, periodo_epidemiologico FROM {table} "
-                f"ORDER BY anio DESC, {_PE_CASE} DESC LIMIT 1"
-            ).fetchone()
-            return f"Período {r[1]}/{r[0]}" if r else 'N/D'
-        except Exception:
-            return 'N/D'
-
-    result['afiliacion'] = _latest_mes('afiliacion')
-    result['aseguramiento'] = result['afiliacion']
-    result['irca'] = _latest_mes('irca')
-    result['mortalidad_materna'] = _latest_pe('ins_mortalidad_materna')
-    result['sifilis_congenita'] = _latest_pe('ins_sifilis_congenita')
-    result['desnutricion_aguda'] = _latest_pe('ins_desnutricion_aguda')
-    result['mortalidad_menores5'] = _latest_pe('ins_mortalidad_menores5')
-    result['dengue'] = _latest_pe('ins_dengue')
-    result['intento_suicidio'] = _latest_pe('ins_intento_suicidio')
-    result['violencia_genero'] = _latest_pe('ins_violencia_genero')
-
-    try:
-        r = con.execute('SELECT MAX(anio) FROM demografico_edad_sexo WHERE anio <= YEAR(CURRENT_DATE)').fetchone()
-        result['demografia'] = str(r[0]) if r and r[0] else 'N/D'
-    except Exception:
-        result['demografia'] = 'N/D'
-
-    try:
-        r = con.execute("SELECT MAX(fecha_corte_reps) FROM reps_prestadores").fetchone()
-        raw = str(r[0]) if r and r[0] else ''
-        result['reps'] = raw.replace('Fecha corte REPS: ', '').strip() if raw else 'N/D'
-    except Exception:
-        result['reps'] = 'N/D'
-
-    result['dift18'] = 'Evaluacion 2024'
-    con.close()
-    return result
-
-
 # ---------------------------------------------------------------------------
 # Metrics — computed by the pipeline (pipeline/metricas.py)
 #
@@ -376,57 +321,4 @@ def get_mun_metrics(dep_codigo: int | None = None,
     return _metrics('municipio', year, month, dep_codigo)
 
 
-# ---------------------------------------------------------------------------
-# DIFT18
-# ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=3600)
-def get_dift18_dept(dep_codigo: int) -> 'pd.Series | None':
-    """Return dept-level DIFT18 row, preferring departamento type over distrito."""
-    con = _connect()
-    try:
-        df = con.execute("""
-            SELECT * FROM v_dift18_departamento
-            WHERE geo_dep_codigo = ?
-            ORDER BY CASE WHEN tipo = 'departamento' THEN 0 ELSE 1 END
-            LIMIT 1
-        """, [dep_codigo]).df()
-    except Exception:
-        return None
-    con.close()
-    return df.iloc[0] if not df.empty else None
-
-
-# DANE municipality codes for the 6 special district cities.
-_DIST_MUN_CODES: set[int] = {8001, 11001, 76109, 76001, 13001, 47001}
-
-
-@st.cache_data(ttl=3600)
-def get_dift18_dist(mun_codigo: int) -> 'pd.Series | None':
-    """Return district-level DIFT18 row (38 dept-style indicators) for the 6 special cities.
-    Returns None for any other municipality."""
-    if mun_codigo not in _DIST_MUN_CODES:
-        return None
-    con = _connect()
-    try:
-        df = con.execute(
-            "SELECT * FROM v_dift18_departamento WHERE mun_codigo_ref = ? LIMIT 1",
-            [mun_codigo]
-        ).df()
-    except Exception:
-        return None
-    con.close()
-    return df.iloc[0] if not df.empty else None
-
-
-@st.cache_data(ttl=3600)
-def get_dift18_mun(mun_codigo: int) -> 'pd.Series | None':
-    con = _connect()
-    try:
-        df = con.execute(
-            "SELECT * FROM v_dift18_municipio WHERE geo_mun_codigo = ?", [mun_codigo]
-        ).df()
-    except Exception:
-        return None
-    con.close()
-    return df.iloc[0] if not df.empty else None

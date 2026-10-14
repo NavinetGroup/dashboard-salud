@@ -151,7 +151,7 @@ class _Checks:
                      f'{pct:.2f}% de {n:,} filas con código de municipio (mínimo {minimum}%)')
         dep_sources = ['v_ins_dengue', 'v_ins_violencia_genero', 'v_ins_mortalidad_menores5',
                        'v_ins_sifilis_congenita', 'v_supersalud_ips_intervenidas',
-                       'v_supersalud_eps_intervenidas', 'v_dift18_departamento']
+                       'v_supersalud_eps_intervenidas']
         for view in dep_sources:
             if not self.has(view):
                 continue

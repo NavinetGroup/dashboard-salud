@@ -37,8 +37,5 @@ pages = {
         st.Page('views/prestacion.py', title='Prestación de servicios', icon=':material/local_hospital:'),
         st.Page('views/financiamiento.py', title='Financiamiento', icon=':material/payments:'),
     ],
-    'Detalle': [
-        st.Page('views/detallado.py', title='Informe detallado', icon=':material/table_view:'),
-    ],
 }
 st.navigation(pages).run()

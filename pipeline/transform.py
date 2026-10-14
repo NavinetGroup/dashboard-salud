@@ -132,55 +132,6 @@ def transform_demografico(con: duckdb.DuckDBPyConnection) -> None:
 # Source: IPS (Resumen_IPS_por_departamento.csv + IPS_intermedio.csv)
 # ---------------------------------------------------------------------------
 
-def transform_ips(con: duckdb.DuckDBPyConnection) -> None:
-    resumen_files = sorted(RAW_DIR.glob('Resumen_IPS_por_departamento*.csv'))
-    inter_files = sorted(RAW_DIR.glob('IPS_intermedio*.csv'))
-
-    if not resumen_files and not inter_files:
-        log.warning('IPS: no hay archivos en data/raw/. Omitiendo.')
-        return
-
-    # Summary table
-    if resumen_files:
-        frames = []
-        for f in resumen_files:
-            try:
-                df = pl.read_csv(f, infer_schema_length=0)
-                df = df.rename({c: c.strip() for c in df.columns})
-                frames.append(df)
-            except Exception as e:
-                log.warning(f'IPS resumen: error leyendo {f} — {e}')
-        if frames:
-            df_res = pl.concat(frames, how='diagonal_relaxed').unique()
-            # Normalize column names to snake_case
-            rename = {}
-            for c in df_res.columns:
-                key = c.strip().lower().replace(' ', '_')
-                if key != c:
-                    rename[c] = key
-            if rename:
-                df_res = df_res.rename(rename)
-            for col in ('total_ips', 'pública', 'privada', 'mixta'):
-                if col in df_res.columns:
-                    df_res = df_res.with_columns(pl.col(col).cast(pl.Int32, strict=False))
-            parquet_path = _write_parquet(df_res, 'ips_resumen')
-            _register_table(con, 'ips_resumen', parquet_path)
-
-    # Intermediate (full detail)
-    if inter_files:
-        frames = []
-        for f in inter_files:
-            try:
-                df = pl.read_csv(f, infer_schema_length=0, ignore_errors=True)
-                frames.append(df)
-            except Exception as e:
-                log.warning(f'IPS intermedio: error leyendo {f} — {e}')
-        if frames:
-            df_int = pl.concat(frames, how='diagonal_relaxed').unique()
-            parquet_path = _write_parquet(df_int, 'ips_detalle')
-            _register_table(con, 'ips_detalle', parquet_path)
-
-
 # ---------------------------------------------------------------------------
 # Source: SIVIGILA microdata — cases per week × residence municipality
 # ---------------------------------------------------------------------------
@@ -342,19 +293,6 @@ def transform_ins_pdf(con: duckdb.DuckDBPyConnection) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Source: DIFT18 Desempeño ET 2024
-# ---------------------------------------------------------------------------
-
-def transform_dift18(con: duckdb.DuckDBPyConnection) -> None:
-    for name in ('dift18_departamento', 'dift18_municipio'):
-        path = PARQUET_DIR / f'{name}.parquet'
-        if not path.exists():
-            log.warning(f'DIFT18 [{name}]: no hay parquet. Ejecuta scrapers/dift18_scraper.py primero.')
-            continue
-        _register_table(con, name, path)
-
-
-# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -385,9 +323,6 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
         print('transform: procesando REPS...')
         transform_reps(con)
 
-        print('transform: procesando IPS legacy...')
-        transform_ips(con)
-
         print('transform: procesando IRCA...')
         transform_irca(con)
 
@@ -408,9 +343,6 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
 
         print('transform: procesando financiamiento (CUIPO / SICODIS)...')
         transform_financiamiento(con)
-
-        print('transform: procesando DIFT18...')
-        transform_dift18(con)
 
         tables = con.execute("SHOW TABLES").fetchall()
         print(f'\ntransform OK — tablas en DuckDB: {[t[0] for t in tables]}')
