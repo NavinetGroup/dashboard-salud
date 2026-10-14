@@ -214,6 +214,24 @@ def transform_sivigila(con: duckdb.DuckDBPyConnection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Source: Financiamiento — CUIPO (ejecución por entidad) + SICODIS (asignación SGP)
+# ---------------------------------------------------------------------------
+
+def transform_financiamiento(con: duckdb.DuckDBPyConnection) -> None:
+    for table, prefix, src in (('cuipo_salud', 'cuipo_salud_', 'cuipo_scraper'),
+                               ('sgp_salud', 'sgp_salud_', 'sicodis_scraper')):
+        con.execute(f'DROP TABLE IF EXISTS {table}')
+        if not list(PARQUET_DIR.glob(f'{prefix}*.parquet')):
+            log.warning(f'{table}: no hay parquet. Ejecuta scrapers/{src}.py primero.')
+            continue
+        # One file per quarter (CUIPO) or per year (SICODIS): no overlap to dedupe
+        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet("
+                    f"'{PARQUET_DIR.as_posix()}/{prefix}*.parquet', union_by_name=True)")
+        n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
+        log.info(f'Tabla DuckDB [{table}]: {n:,} filas')
+
+
+# ---------------------------------------------------------------------------
 # Source: IRCA
 # ---------------------------------------------------------------------------
 
@@ -377,6 +395,9 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
 
         print('transform: procesando SIVIGILA...')
         transform_sivigila(con)
+
+        print('transform: procesando financiamiento (CUIPO / SICODIS)...')
+        transform_financiamiento(con)
 
         print('transform: procesando DIFT18...')
         transform_dift18(con)

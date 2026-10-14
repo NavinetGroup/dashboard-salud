@@ -47,7 +47,9 @@ SRC = {
     'supersalud':  'Supersalud — entidades en medida especial',
     'sivicap':     'INS — SIVICAP',
     'sivigila':    'INS — SIVIGILA (microdatos anuales; boletín PDF para el año en curso)',
-    'cuipo':       'CGR — CUIPO / MSPS',
+    'cuipo':       'CGR — CUIPO (ejecución presupuestal, datos.gov.co)',
+    'sicodis':     'DNP — SICODIS (asignaciones SGP)',
+    'cuipo_sgp':   'CGR — CUIPO · DNP — SICODIS',
 }
 
 # ── Demográficos ──────────────────────────────────────────────────────────────
@@ -162,24 +164,28 @@ CAPACIDAD = [
     Indicator('uci_ped', 'UCI pediátricas', 'uci_pediatricas', 'camas', icon='child_care', trend='', source='reps'),
 ]
 
-# ── Financiamiento (11) — CUIPO / SICODIS / ADRES por integrar; 9–11 del cliente ─
-_FIN_PENDING = 'CUIPO (CGR) / SICODIS — por integrar.'
+# ── Financiamiento (11) — 1–7 CUIPO (CGR) + SICODIS (DNP); 8 por integrar; 9–11 del cliente ─
+# Formulas are a proposal pending Supersalud validation: docs/FINANCIAMIENTO_FORMULAS.md.
+# CUIPO is year-to-date, so values rise through the year; the trend compares the
+# same quarter a year earlier (percentage points).
 _CLIENT = 'Dato interno: solicitar a Supersalud / MSPS.'
+
+
+def _fin(key, label, col, icon, source='cuipo', better=False):
+    return Indicator(key, label, col, '%', decimals=1, icon=icon, trend='pp', source=source,
+                     period_col='periodo_cuipo', lower_is_better=None if better is None else not better)
+
+
 FINANCIAMIENTO = [
-    Indicator('fin1', 'Ejecución presupuestal — compromisos vs. ingresos FLS', None, '%',
-              icon='request_quote', trend='', pending=_FIN_PENDING),
-    Indicator('fin2', 'Ejecución presupuestal — compromisos FLS', None, '%',
-              icon='receipt_long', trend='', pending=_FIN_PENDING),
-    Indicator('fin3', 'Ejecución presupuestal — pagos vs. ingresos', None, '%',
-              icon='currency_exchange', trend='', pending=_FIN_PENDING),
-    Indicator('fin4', 'SGP salud pública — compromisos', None, '%', icon='ecg_heart',
-              trend='', pending=_FIN_PENDING),
-    Indicator('fin5', 'SGP salud pública — pagos', None, '%', icon='volunteer_activism',
-              trend='', pending=_FIN_PENDING),
-    Indicator('fin6', 'SGP subsidio a la oferta — compromisos', None, '%', icon='local_hospital',
-              trend='', pending=_FIN_PENDING),
-    Indicator('fin7', 'SGP subsidio a la oferta — giros', None, '%', icon='sync_alt',
-              trend='', pending='SICODIS + giros MSPS (parcial); confirmar con el cliente.'),
+    # compromisos > recaudo is not "good" or "bad" by itself (commitments run ahead of cash)
+    _fin('fin1', 'Ejecución presupuestal — compromisos vs. ingresos FLS', 'fin_comp_recaudo',
+         'request_quote', better=None),
+    _fin('fin2', 'Ejecución presupuestal — compromisos FLS', 'fin_comp_aprop', 'receipt_long'),
+    _fin('fin3', 'Ejecución presupuestal — pagos vs. ingresos', 'fin_pagos_recaudo', 'currency_exchange'),
+    _fin('fin4', 'SGP salud pública — compromisos', 'fin_sgp_sp_comp', 'ecg_heart', 'cuipo_sgp'),
+    _fin('fin5', 'SGP salud pública — pagos', 'fin_sgp_sp_pagos', 'volunteer_activism', 'cuipo_sgp'),
+    _fin('fin6', 'SGP subsidio a la oferta — compromisos', 'fin_sgp_of_comp', 'local_hospital', 'cuipo_sgp'),
+    _fin('fin7', 'SGP subsidio a la oferta — giros', 'fin_sgp_of_giros', 'sync_alt', 'cuipo_sgp'),
     Indicator('fin8', 'Cumplimiento meta de cofinanciación régimen subsidiado', None, '%',
               icon='target', trend='', pending='Matriz de continuidad MSPS + ADRES LMA — por integrar.'),
     Indicator('fin9', 'Deuda Circular 030 de 2013 (pagos / compromisos firmados)', None, '%',

@@ -43,7 +43,7 @@ _TRACKED = [
     'reps_prestadores', 'reps_sedes', 'reps_servicios', 'reps_capacidad',
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
-    'bdua_eps', 'bdua_piramide', 'sivigila_casos',
+    'bdua_eps', 'bdua_piramide', 'sivigila_casos', 'cuipo_salud', 'sgp_salud',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -286,6 +286,38 @@ class _Checks:
             self.add(f'frescura_{t}', 'warn', lag <= 3,
                      f'último periodo {y} PE {pe} ({lag} periodos de atraso)')
 
+    # -- 6b. financiamiento (CUIPO + SICODIS) -----------------------------------
+    def financing(self) -> None:
+        if not self.has('v_cuipo_salud'):
+            return
+        # The CGN→DIVIPOLA rule (last 5 digits, plus the 923… exceptions) must
+        # land on a real municipality; a miss means a new CGN code to map.
+        bad, n = self.one("""SELECT COUNT(*) FILTER (WHERE geo_mun_dane IS NULL), COUNT(*)
+                             FROM v_cuipo_salud WHERE nivel = 'municipio'""")
+        self.add('cuipo_codigo_divipola', 'error', bad == 0,
+                 f'{bad} de {n:,} filas municipales sin municipio DANE (revisar _CGN_DIVIPOLA)')
+        y, m, n_mun, n_dep = self.one("""
+            SELECT anio, mes, COUNT(*) FILTER (WHERE nivel = 'municipio'),
+                   COUNT(*) FILTER (WHERE nivel = 'departamento')
+            FROM cuipo_salud GROUP BY anio, mes ORDER BY anio DESC, mes DESC LIMIT 1""")
+        self.add('cuipo_cobertura', 'warn', n_mun >= 1050 and n_dep >= 31,
+                 f'{y}-{m:02d}: {n_mun:,} municipios y {n_dep} gobernaciones reportan (≥1.050 y ≥31)')
+        if self.has('sgp_salud'):
+            miss = self.one("""SELECT COUNT(*) FROM cuipo_salud c
+                WHERE anio IN (SELECT anio FROM sgp_salud) AND NOT EXISTS (
+                    SELECT 1 FROM sgp_salud s WHERE s.anio = c.anio AND s.codigo_dep = c.codigo_dep
+                       AND s.codigo_mun IS NOT DISTINCT FROM c.codigo_mun)""")[0]
+            self.add('cuipo_sgp_cruce', 'error', miss == 0,
+                     f'{miss} filas CUIPO sin asignación SICODIS del mismo año')
+        age = (self.today.year - y) * 12 + self.today.month - m
+        # CGR publishes a quarter ~2–4 months after it closes
+        self.add('frescura_cuipo', 'warn', age <= 6, f'último trimestre {y}-{m:02d} ({age} meses)')
+        if self.has('v_metricas_nacional'):
+            r = self.one("SELECT fin_comp_aprop, fin_sgp_sp_comp FROM v_metricas_nacional")
+            if r[0] is not None:
+                self.add('fin_rango_nacional', 'warn', 5 <= r[0] <= 105 and 0 <= (r[1] or 0) <= 150,
+                         f'nacional: compromisos/apropiación {r[0]:.1f} %, SGP salud pública {r[1] or 0:.1f} %')
+
     # -- 7. row-count jumps vs previous load ----------------------------------
     def row_jumps(self) -> None:
         self.con.execute("""CREATE TABLE IF NOT EXISTS _carga_log (
@@ -310,7 +342,7 @@ class _Checks:
 
     def run_all(self) -> list[Result]:
         for step in (self.structure, self.duplicates, self.geo_match, self.consistency,
-                     self.ranges, self.freshness, self.row_jumps):
+                     self.ranges, self.freshness, self.financing, self.row_jumps):
             try:
                 step()
             except Exception as e:   # a broken check must be visible, not skipped

@@ -41,6 +41,8 @@ import scrapers.afiliacion_scraper as afiliacion
 import scrapers.supersalud_scraper as supersalud
 import scrapers.bdua_scraper as bdua
 import scrapers.sivigila_scraper as sivigila
+import scrapers.cuipo_scraper as cuipo
+import scrapers.sicodis_scraper as sicodis
 import scrapers.ins_pdf_scraper as ins_pdf
 import pipeline.transform as transform
 import pipeline.quality as quality
@@ -167,6 +169,8 @@ def run_monthly() -> int:
         (supersalud.run, 'supersalud_scraper'),
         (bdua.run, 'bdua_scraper'),            # monthly snapshot: archive every run
         (sivigila.run, 'sivigila_scraper'),    # annual files; cheap no-op when unchanged
+        (cuipo.run, 'cuipo_scraper'),          # quarterly; refetches only when CGR updates
+        (sicodis.run, 'sicodis_scraper'),      # SGP allocations; current year each run
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])
@@ -188,6 +192,8 @@ def run_all() -> int:
         (supersalud.run, 'supersalud_scraper'),
         (bdua.run, 'bdua_scraper'),            # monthly snapshot: archive every run
         (sivigila.run, 'sivigila_scraper'),    # annual files; cheap no-op when unchanged
+        (cuipo.run, 'cuipo_scraper'),          # quarterly; refetches only when CGR updates
+        (sicodis.run, 'sicodis_scraper'),      # SGP allocations; current year each run
         (ins_pdf.run, 'ins_pdf_scraper'),
         *_BUILD_AND_PUBLISH,
     ])

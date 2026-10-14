@@ -219,6 +219,57 @@ def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str)
 
 
 # Afiliación: subsidised-regime affiliates without Sisbén IV classification (FCT Aseguramiento 8–11)
+# Financiamiento (CUIPO + SICODIS). Proposed formulas — to validate with
+# Supersalud (docs/FINANCIAMIENTO_FORMULAS.md). CUIPO is cumulative within the
+# year, so a quarter's ratios are year-to-date execution.
+_FIN_RATIOS = {
+    'fin_comp_recaudo':  ('fls_compromisos',    'fls_recaudo'),                # 1 compromisos FLS / recaudo FLS
+    'fin_comp_aprop':    ('fls_compromisos',    'fls_apropiacion_definitiva'), # 2 compromisos FLS / apropiación
+    'fin_pagos_recaudo': ('fls_pagos',          'fls_recaudo'),                # 3 pagos FLS / recaudo FLS
+    'fin_sgp_sp_comp':   ('sgp_sp_compromisos', 'sgp_salud_publica'),          # 4 SGP salud pública
+    'fin_sgp_sp_pagos':  ('sgp_sp_pagos',       'sgp_salud_publica'),          # 5
+    'fin_sgp_of_comp':   ('sgp_of_compromisos', 'sgp_subsidio_oferta'),        # 6 SGP subsidio a la oferta
+    'fin_sgp_of_giros':  ('sgp_of_recaudo',     'sgp_subsidio_oferta'),        # 7 giros recibidos / asignación
+}
+_FIN_AMOUNTS = ('fls_recaudo', 'fls_apropiacion_definitiva', 'fls_compromisos', 'fls_pagos')
+_FIN_COLS = (*_FIN_RATIOS, *_FIN_AMOUNTS, 'periodo_cuipo')
+_FIN_MES_LABEL = "(LIST_VALUE(" + ", ".join(f"'{m}'" for m in (
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO',
+    'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE')) + ")[c.mes] || ' ' || CAST(c.anio AS VARCHAR))"
+
+
+def _fin_sql(group_cols: str, where: str, year, month, caps: dict | None) -> str:
+    """Financing ratios (%) per group: Σ numerator / Σ denominator over the CUIPO
+    entities matching `where`, at the single latest quarter in scope. SGP
+    denominators are the year's SICODIS allocation; a zero allocation (e.g. no
+    subsidio a la oferta) gives NULL, not 0 %."""
+    m = (caps or {}).get('fin_mes') or (_MESES.index(month) + 1 if month else None)
+    scope = _year_cond(year) + (f" AND mes <= {int(m)}" if m else '')
+    sel = f'{group_cols},' if group_cols else ''
+    grp = f'GROUP BY {group_cols}' if group_cols else ''
+    ratios = ',\n           '.join(
+        f'100.0 * SUM({n}) / NULLIF(SUM({d}), 0) AS {col}' for col, (n, d) in _FIN_RATIOS.items())
+    amounts = ', '.join(f'SUM({c}) AS {c}' for c in _FIN_AMOUNTS)
+    return f"""
+    SELECT {sel}
+           {ratios},
+           {amounts},
+           ANY_VALUE(periodo_cuipo) AS periodo_cuipo
+    FROM (SELECT c.*, s.sgp_salud_publica, s.sgp_subsidio_oferta, {_FIN_MES_LABEL} AS periodo_cuipo
+          FROM (SELECT * FROM v_cuipo_salud
+                WHERE ({where}) AND {scope}
+                  AND anio * 100 + mes = (SELECT MAX(anio * 100 + mes) FROM v_cuipo_salud
+                                          WHERE {scope})) c
+          LEFT JOIN sgp_salud s
+                 ON s.anio = c.anio AND s.codigo_dep = c.codigo_dep
+                AND s.codigo_mun IS NOT DISTINCT FROM c.codigo_mun)
+    {grp}"""
+
+
+def _fin_null() -> list[str]:
+    return [f'NULL::{"VARCHAR" if c == "periodo_cuipo" else "DOUBLE"} AS {c}' for c in _FIN_COLS]
+
+
 _SISBEN_SRC = {
     'afil_sin_sisben':             '"Afil. Subsidiado sin SISBEN IV"',
     'afil_especiales_sin_sisben':  '"Afil. Pob. Especiales Subsidiado sin SISBEN IV"',
@@ -588,6 +639,15 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
                          for c in _sv_cols()]
     else:
         select_extra += [f'NULL::{"VARCHAR" if c == "periodo_sivigila" else "DOUBLE"} AS {c}' for c in _sv_cols()]
+
+    # ── Financiamiento: the municipality's own budget (Bogotá included) ────────
+    if ev.get('v_cuipo_salud'):
+        ctefile.append(('fin', _fin_sql('geo_dep_codigo, geo_mun_codigo', "nivel = 'municipio'",
+                                        year, month, caps)))
+        join_clauses.append("LEFT JOIN fin ON gm.dep_codigo = fin.geo_dep_codigo AND gm.mun_codigo = fin.geo_mun_codigo")
+        select_extra += [f'fin.{c}' for c in _FIN_COLS]
+    else:
+        select_extra += _fin_null()
 
     # Unavailable indicators
     select_extra += [
@@ -977,6 +1037,16 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     else:
         select_extra += [f'NULL::{"VARCHAR" if c == "periodo_sivigila" else "DOUBLE"} AS {c}' for c in _sv_cols()]
 
+    # ── Financiamiento: the gobernación's own budget; Bogotá D.C. has none, so
+    # its district budget stands for department 11 ──────────────────────────────
+    if ev.get('v_cuipo_salud'):
+        ctefile.append(('fin', _fin_sql('geo_dep_codigo', "nivel = 'departamento' OR codigo_mun = 11001",
+                                        year, month, caps)))
+        join_clauses.append("LEFT JOIN fin ON gd.dep_codigo = fin.geo_dep_codigo")
+        select_extra += [f'fin.{c}' for c in _FIN_COLS]
+    else:
+        select_extra += _fin_null()
+
     select_extra += [
         'NULL::DOUBLE  AS lsp',
         'NULL::DOUBLE  AS vsp',
@@ -1038,6 +1108,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
         parts.append(('eps', _eps_counts('', 'TRUE'), list(_EPS_COLS)))
     if ev.get('v_sivigila_casos') and ev.get('v_demografico_menores5'):
         parts.append(('sv', _sv_sql('', 'geo_mun_codigo IS NOT NULL', year, caps, pob_year), _sv_cols()))
+    if ev.get('v_cuipo_salud'):   # every territorial entity pooled
+        parts.append(('fin', _fin_sql('', 'TRUE', year, month, caps), list(_FIN_COLS)))
     if ev.get('v_reps_capacidad'):
         parts.append(('cap', f"""
     SELECT {_CAP_TYPES}
@@ -1220,6 +1292,10 @@ def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
         caps['afil_mes'] = month or con.execute(
             f"SELECT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? "
             f"ORDER BY {_MES_CASE} DESC LIMIT 1", [year]).fetchone()[0]
+    if ev.get('v_cuipo_salud'):
+        caps['fin_mes'] = (_MESES.index(month) + 1 if month else
+                           con.execute("SELECT MAX(mes) FROM cuipo_salud WHERE anio = ?",
+                                       [year]).fetchone()[0])
     if ev.get('v_irca'):
         caps['irca_mes'] = (_MESES.index(month) + 1 if month else
                             con.execute(f"SELECT MAX({_MES_CASE}) FROM irca WHERE anio = ?",
@@ -1256,6 +1332,7 @@ def build_all(db_path: 'str | Path') -> None:
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
             'v_bdua_eps', 'v_bdua_piramide',
             'v_sivigila_casos', 'v_demografico_menores5',
+            'v_cuipo_salud',
         ]}
         missing = [k for k, v in ev.items() if not v]
         if missing:

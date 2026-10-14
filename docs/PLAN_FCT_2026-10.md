@@ -70,7 +70,7 @@ Common elements: Supersalud branding, icon-led KPI cards, a source/period footer
 ### Financiamiento (11)
 | # | Status | Notes |
 |---|---|---|
-| 1–6 | 🔵 | CUIPO (CGR, datos.gov.co, quarterly) + SICODIS. CGN→DIVIPOLA mapping needed |
+| 1–7 | ✅ | CUIPO (CGR, quarterly) + SICODIS (DNP). Built 2026-10-13; formulas pending client validation (docs/FINANCIAMIENTO_FORMULAS.md) |
 | 7 | 🔵/🔴 | SGP supply-subsidy transfers |
 | 8 | 🔵 | Co-financing: MinSalud matrix + ADRES LMA |
 | 9–11 | 🔴 | Circular 030, PNA/NPBS, migrants: from the client |
