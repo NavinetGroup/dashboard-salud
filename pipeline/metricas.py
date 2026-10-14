@@ -1498,6 +1498,12 @@ def build_all(db_path: 'str | Path') -> None:
             n = con.execute(f"SELECT COUNT(*) FROM {v}").fetchone()[0]
             print(f'  {v}: {n:,} filas')
 
+        # The period tables evaluate the same source views ~90 times (15 periods ×
+        # 6 tables); materialising each one first as a temp table of the same
+        # name (it shadows the view on this connection only) cuts the build from
+        # ~125 s to ~70 s with identical results.
+        for view in [v for v, ok in ev.items() if ok]:
+            con.execute(f'CREATE OR REPLACE TEMP TABLE {view} AS SELECT * FROM main.{view}')
         _build_period_tables(con, ev)
         if ev.get('v_bdua_piramide'):
             _build_piramide(con)

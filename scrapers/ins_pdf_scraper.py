@@ -17,6 +17,7 @@ Salidas: data/parquet/ins_{nombre_evento}_PE_{periodo}_{anio}[_tabla{i}].parquet
 """
 
 import io
+import json
 import logging
 import re
 import time
@@ -72,6 +73,9 @@ PE_START_WEEKS = [1, 5, 9, 13, 18, 22, 26, 31, 35, 40, 44, 48, 52]
 # tables: list of 0-indexed table indices on that page (None = all)
 # ---------------------------------------------------------------------------
 
+# Days before a period found empty (no bulletin / no usable table) is tried again
+_RETRY_DAYS = 30
+
 EVENTS = [
     {
         'key': 'mortalidad_materna',
@@ -103,24 +107,6 @@ EVENTS = [
                 'geo_validate_col': 'departamento',
             },
         ],
-    },
-    {
-        'key': 'sifilis_congenita',
-        'url_name': 'SÍFILIS CONGÉNITA',
-        # Page 3 in PDF viewer (0-indexed: 2) = "Entidad territorial" table (~47 rows)
-        # which covers all departments + 6 special districts including Bogotá D.C.
-        'page': 2,
-        'tables': [0],
-        # Column layout confirmed from PDF: entity name, MF cases, MF%, NV SC cases, NV%, total SC.
-        # 'casos_sc_nv' = nacidos vivos with SC (≈ national-total-matching count).
-        # 'casos_sc_total' = NV + MF = total SC cases per entity (used as main case metric).
-        'column_schema': [[
-            'entidad_territorial', 'casos_sc_mf', 'pct_mf',
-            'casos_sc_nv', 'pct_nv', 'casos_sc_total',
-        ]],
-        'geo_validate_col': 'entidad_territorial',
-        'min_entity_rows': 30,  # entidad territorial table has ~47 rows; reject tiny fragments
-        'fallback_pages': [1, 3, 4],
     },
     {
         'key': 'desnutricion_aguda',
@@ -161,24 +147,6 @@ EVENTS = [
             'min_entity_len': 4,   # excludes chart labels ('e','d') and 'DNT'/'IRA'/'EDA'
         },
         'column_names': ['entidad_territorial', 'tasa_dnt', 'tasa_ira', 'tasa_eda'],
-    },
-    {
-        'key': 'dengue',
-        'url_name': 'DENGUE',
-        'page': 3,
-        'tables': [0],
-        'strategy': 'word_grid',  # entity col (x≈1) sits outside ruling-line borders
-        'column_names': [
-            'entidad_territorial', 'dengue_total', 'dengue_grave_total',
-            'bajo_investigacion', 'incidencia_x100k',
-            'sin_alarma_n', 'con_alarma_n', 'grave_n',
-            'sin_alarma_confirmacion_pct', 'con_alarma_confirmacion_pct',
-            'grave_confirmacion_pct',
-            'con_alarma_hospitalizacion_pct', 'grave_hospitalizacion_pct',
-            'muertes_confirmadas', 'letalidad_dengue_pct', 'letalidad_dengue_grave_pct',
-        ],
-        # Trim any header-fragment rows that appear above the first real data row
-        'first_entity': 'Amazonas',
     },
     {
         'key': 'intento_suicidio',
@@ -266,16 +234,9 @@ URL_NAME_VARIANTS = {
         'MORTALIDAD EN MENORES 5 A%C3%91OS',
         'MORTALIDAD EN MENORES DE 5 A%C3%91OS',
     ],
-    'sifilis_congenita': [
-        'S%C3%8DFILIS%20CONG%C3%89NITA',
-        'SIFILIS CONGENITA',
-    ],
     'violencia_genero': [
         'VIOLENCIA DE G%C3%89NERO',
         'VIOLENCIA DE GENERO',
-    ],
-    'dengue': [
-        'DENGUE ',  # some early files have a trailing space before .pdf
     ],
 }
 
@@ -1097,23 +1058,39 @@ def run(base_dir: str = None, events: list[str] | None = None,
 
     selected = [e for e in EVENTS if events is None or e['key'] in events]
     periods = _all_periods(start_year)
+    recent = set(periods[-2:])   # may still be published: always retried
 
     print(f'ins_pdf_scraper: {len(periods)} periodos desde PE I {start_year} hasta PE actual')
+
+    # Periods whose bulletin is missing or has no usable table were re-downloaded
+    # on every run (most of the scraper's ~7 min). They are remembered for
+    # _RETRY_DAYS; the two latest periods are always retried.
+    seen_path = parquet_dir / 'ins_pdf_sin_datos.json'
+    seen = json.loads(seen_path.read_text(encoding='utf-8')) if seen_path.exists() else {}
+    today = date.today()
 
     all_written, empty_events = [], []
     for event in selected:
         key = event['key']
         new_for_event = 0
         for pe, year in periods:
+            stamp = f'PE_{ROMAN[pe - 1]}_{year}'
+            last = seen.get(key, {}).get(stamp)
+            if (pe, year) not in recent and last and                     (today - date.fromisoformat(last)).days < _RETRY_DAYS:
+                continue
             written = scrape_event_period(event, parquet_dir, pe, year)
             if written:   # includes periods already cached on disk
                 all_written.extend(written)
                 new_for_event += len(written)
+                seen.get(key, {}).pop(stamp, None)
+            elif (pe, year) not in recent:
+                seen.setdefault(key, {})[stamp] = today.isoformat()
         if new_for_event > 0:
             print(f'  [{key}]: {new_for_event} archivo(s) disponibles')
         else:
             empty_events.append(key)
 
+    seen_path.write_text(json.dumps(seen, indent=1, sort_keys=True), encoding='utf-8')
     if empty_events:
         raise ScrapeError(f'ins_pdf: sin ningún archivo para {", ".join(empty_events)} '
                           f'(¿INS caído o cambió la URL de los informes?)')

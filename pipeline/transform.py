@@ -267,8 +267,8 @@ def transform_bdua(con: duckdb.DuckDBPyConnection) -> None:
 # ---------------------------------------------------------------------------
 
 INS_EVENTS = [
-    'mortalidad_materna', 'sifilis_congenita', 'desnutricion_aguda',
-    'mortalidad_menores5', 'dengue', 'intento_suicidio', 'violencia_genero',
+    'mortalidad_materna', 'desnutricion_aguda',
+    'mortalidad_menores5', 'intento_suicidio', 'violencia_genero',
 ]
 
 def transform_ins_pdf(con: duckdb.DuckDBPyConnection) -> None:

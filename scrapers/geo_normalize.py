@@ -174,11 +174,9 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('bdua_piramide',          'departamento',        'municipio',   False, None),
     # ins_mortalidad_materna has dept-level rows (entidad_territorial) + mun rows (departamento/municipio)
     ('ins_mortalidad_materna', 'departamento',        'municipio',   False, 'entidad_territorial'),
-    ('ins_sifilis_congenita',  'entidad_territorial', None,          False, None),
     ('ins_desnutricion_aguda', 'departamento',        'municipio',   False, None),
     ('ins_intento_suicidio',   'departamento',        'municipio',   False, None),
     ('ins_mortalidad_menores5','entidad_territorial', None,          False, None),
-    ('ins_dengue',             'entidad_territorial', None,          False, None),
     ('ins_violencia_genero',   'entidad_territorial', None,          False, None),
     # supersalud: some rows have ciudad/departamento swapped (e.g. 'TOLIMA' / 'IBAGUÉ');
     # the capital-city entries in DEPT_ALIASES resolve those.
