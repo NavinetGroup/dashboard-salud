@@ -203,10 +203,10 @@ Los datos se procesan y publican una vez al mes. El tablero se actualiza solo al
 horas si queda abierto), por dos vías:
 
 - **Carpeta compartida (SharePoint).** El equipo que procesa los datos deja la base nueva en una
-  biblioteca de SharePoint. Si esa biblioteca está sincronizada en su equipo con OneDrive y la ruta
-  está escrita en `InformeRegional\app\informe_regional.toml` (`carpeta_actualizacion`), el tablero la
-  toma de ahí. Quien le entregó el tablero normalmente ya dejó esa ruta configurada; si no, ábrala con
-  el Bloc de notas y escriba la ruta de la carpeta sincronizada, con barras `/`.
+  biblioteca de SharePoint (`Informe Regional` → `Datos`). Basta con tener esa biblioteca sincronizada
+  en su equipo con OneDrive: el tablero la encuentra solo, sea cual sea su usuario. Si la biblioteca
+  tiene otro nombre, quien le entregó el tablero habrá ajustado la ruta en
+  `InformeRegional\app\informe_regional.toml`.
 - **Internet.** Busca la última versión publicada en la dirección configurada (`url_actualizacion`);
   si es más nueva que la suya, la descarga (unos 14 MB), la verifica y la instala.
 

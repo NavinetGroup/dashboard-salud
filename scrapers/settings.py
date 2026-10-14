@@ -21,6 +21,7 @@ or set the matching environment variable, which wins over the file.
                                           configured with the same folder picks it up
 """
 
+import glob
 import os
 import tomllib
 from pathlib import Path
@@ -41,7 +42,11 @@ def _get(env: str, section: str, key: str, default: str) -> str:
 
 
 def _path(value: str) -> Path:
-    p = Path(os.path.expandvars(os.path.expanduser(value)))
+    """'~' = user profile, %VAR% = environment variable, '*' = any folder name
+    (first existing match); relative paths hang from the project root."""
+    pattern = os.path.expandvars(os.path.expanduser(value))
+    hits = sorted(p for p in glob.glob(pattern) if os.path.isdir(p))
+    p = Path(hits[0] if hits else pattern)
     return p if p.is_absolute() else ROOT / p
 
 

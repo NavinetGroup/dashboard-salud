@@ -81,10 +81,11 @@ CONFIG = '''# Configuración del tablero. Edite con el Bloc de notas y vuelva a 
 # Las variables de entorno INFORME_UPDATE_DIR e INFORME_RELEASE_URL tienen prioridad.
 
 [tablero]
-# Carpeta compartida (biblioteca de SharePoint sincronizada con OneDrive o unidad de red)
-# donde el operador deja cada mes la base informe_regional_visor.duckdb. Use barras "/".
-# Ejemplo:  carpeta_actualizacion = "C:/Users/<usuario>/Supersalud/Informe Regional - Datos"
-carpeta_actualizacion = ""
+# Carpeta compartida donde el operador deja cada mes la base informe_regional_visor.duckdb:
+# la biblioteca "Datos" del sitio de SharePoint "Informe Regional", sincronizada con OneDrive.
+# "~" es la carpeta del usuario y "*" vale por cualquier nombre (el de la organización en
+# OneDrive), así que este valor sirve para todos los usuarios sin editarlo. Use barras "/".
+carpeta_actualizacion = "~/*/Informe Regional - Datos"
 
 # URL donde se publica la base (manifest.json + archivo). "" para no buscar en internet.
 url_actualizacion = "https://github.com/NavinetGroup/dashboard-salud/releases/latest/download"

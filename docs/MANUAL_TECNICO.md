@@ -155,8 +155,10 @@ por defecto.
 | `[tablero] url_actualizacion` | `INFORME_RELEASE_URL` | release *latest* del repositorio | (Tablero) URL base con `manifest.json` y la base; `""` desactiva la descarga |
 
 Un valor vacío (`""`) es un valor explícito y desactiva el canal; solo una clave ausente usa el valor
-por defecto. `manual_dir(fuente)` devuelve `<manuales>/<fuente>` y crea la carpeta. Rutas relativas se
-resuelven contra la raíz del proyecto; se expanden `~` y variables (`%OneDrive%`).
+por defecto. En las rutas, `~` es la carpeta del usuario, `%VAR%` una variable de entorno y `*` vale por
+cualquier nombre de carpeta (se toma la primera que exista), de modo que `~/*/Informe Regional - Datos`
+encuentra la biblioteca sincronizada sea cual sea el usuario y la organización. Las rutas relativas se
+resuelven contra la raíz del proyecto. `manual_dir(fuente)` devuelve `<manuales>/<fuente>` y crea la carpeta.
 
 El tablero lee la sección `[tablero]` del mismo archivo, situado junto a la aplicación: la raíz del
 repositorio en el equipo del operador, `app\informe_regional.toml` en la versión portable (sección 7.3).
@@ -719,12 +721,13 @@ Informe Regional/
   Datos/       informe_regional_visor.duckdb + manifest.json   (los deja publicar_datos.py cada mes)
 ```
 
-1. **Antes de distribuir**, abrir `app\informe_regional.toml` del paquete y escribir en
-   `carpeta_actualizacion` la ruta local con la que OneDrive sincroniza `Datos/` en los equipos de los
-   usuarios (por ejemplo `C:/Users/<usuario>/<Entidad>/Informe Regional - Datos`; se admiten `~` y
-   variables como `%OneDrive%`). Si la entidad no usa GitHub, dejar `url_actualizacion = ""`. Volver a
-   comprimir la carpeta `InformeRegional` o regenerar el zip con `build_portable.py` después de cambiar
-   la plantilla `CONFIG`.
+1. **Nombres.** Si el sitio se llama `Informe Regional` y la biblioteca `Datos`, OneDrive la sincroniza
+   en cada equipo como `C:\Users\<usuario>\<Organización>\Informe Regional - Datos`. El paquete ya
+   trae `carpeta_actualizacion = "~/*/Informe Regional - Datos"` (`~` = carpeta del usuario, `*` =
+   cualquier nombre de organización), así que **no hay que editar nada** en los equipos de los usuarios.
+   Con otros nombres, cambiar ese valor una vez en `app\informe_regional.toml` (o en la plantilla
+   `CONFIG` de `build_portable.py` y regenerar el zip). Si la entidad no usa GitHub, poner
+   `url_actualizacion = ""`.
 2. Subir el zip y el manual a `Tablero/`. Los usuarios lo descargan, lo descomprimen en una carpeta
    local (no en OneDrive ni en una unidad de red) y abren el `.bat`.
 3. En el equipo del operador, `informe_regional.toml` → `[publicacion] carpeta` apunta a su copia

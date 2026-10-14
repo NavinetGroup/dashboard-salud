@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """Cached DuckDB queries and GeoJSON loader for the dashboard."""
 
+import glob
 import hashlib
 import json
 import os
@@ -57,8 +58,19 @@ def _setting(env: str, key: str, default: str) -> str:
 GITHUB_REPO = os.environ.get('INFORME_GITHUB_REPO', 'NavinetGroup/dashboard-salud')
 RELEASE_URL = _setting('INFORME_RELEASE_URL', 'url_actualizacion',
                        f'https://github.com/{GITHUB_REPO}/releases/latest/download').rstrip('/')
-_shared = _setting('INFORME_UPDATE_DIR', 'carpeta_actualizacion', '')
-SHARED_DIR = Path(os.path.expandvars(os.path.expanduser(_shared))) if _shared else None
+
+
+def _shared_dir() -> Path | None:
+    """The shared folder, resolved each time (OneDrive may finish syncing after
+    the app started). '~' is the user's profile, %VAR% an environment variable,
+    and '*' matches any folder name, so one setting such as
+    '~/*/Informe Regional - Datos' fits every user and tenant without editing."""
+    value = _setting('INFORME_UPDATE_DIR', 'carpeta_actualizacion', '')
+    if not value:
+        return None
+    pattern = os.path.expandvars(os.path.expanduser(value))
+    hits = sorted(p for p in glob.glob(pattern) if os.path.isdir(p))
+    return Path(hits[0] if hits else pattern)
 # DANE Marco Geoestadístico Nacional, simplified (tools/build_geojson.py)
 GEOJSON_PATH = Path(__file__).parent / 'colombia_dptos.geojson'
 GEOJSON_MPIOS_PATH = Path(__file__).parent / 'colombia_mpios.geojson'
@@ -167,9 +179,9 @@ def _ensure_db() -> str:
         updated = _from_folder(DROP_DIR, consume=True)
     except Exception as e:
         problems.append(f'carpeta de actualización: {e}')
-    if SHARED_DIR is not None:
+    if (shared := _shared_dir()) is not None:
         try:
-            updated = _from_folder(SHARED_DIR, consume=False) or updated
+            updated = _from_folder(shared, consume=False) or updated
         except Exception as e:
             problems.append(f'carpeta compartida: {e}')
     if RELEASE_URL:

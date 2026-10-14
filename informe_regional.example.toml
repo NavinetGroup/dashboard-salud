@@ -19,6 +19,7 @@ manuales = "data/manual"
 #
 # Carpeta compartida (biblioteca de SharePoint sincronizada con OneDrive, unidad de red):
 # todos los tableros configurados con la misma carpeta toman la base nueva al abrirse.
+# Admite "~" y "*" igual que [tablero], por ejemplo  carpeta = "~/*/Informe Regional - Datos"
 # Variable de entorno: INFORME_PUBLICACION_DIR
 carpeta = ""
 # Repositorio de GitHub (release pública "datos-<versión>"); "" para no publicar ahí.
@@ -27,10 +28,10 @@ repo = "NavinetGroup/dashboard-salud"
 
 [tablero]
 # Carpeta compartida donde aparece la base mensual (la misma de [publicacion] carpeta, vista
-# desde el equipo del usuario), por ejemplo
-#   carpeta_actualizacion = "C:/Users/<usuario>/Supersalud/Informe Regional - Datos"
+# desde el equipo del usuario). "~" = carpeta del usuario, "*" = cualquier nombre de carpeta
+# (el de la organización en OneDrive), así que un solo valor sirve para todos los usuarios.
 # Variable de entorno: INFORME_UPDATE_DIR
-carpeta_actualizacion = ""
+carpeta_actualizacion = "~/*/Informe Regional - Datos"
 # URL base donde están manifest.json y la base (una release de GitHub, un servidor web);
 # "" para no buscar en internet.
 # Variable de entorno: INFORME_RELEASE_URL
