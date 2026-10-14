@@ -219,13 +219,17 @@ def transform_sivigila(con: duckdb.DuckDBPyConnection) -> None:
 
 def transform_financiamiento(con: duckdb.DuckDBPyConnection) -> None:
     for table, prefix, src in (('cuipo_salud', 'cuipo_salud_', 'cuipo_scraper'),
-                               ('sgp_salud', 'sgp_salud_', 'sicodis_scraper')):
+                               ('sgp_salud', 'sgp_salud_', 'sicodis_scraper'),
+                               ('cofin_meta', 'cofin_meta_', 'cofinanciacion_scraper'),
+                               ('cofin_lma', 'cofin_lma_', 'cofinanciacion_scraper')):
         con.execute(f'DROP TABLE IF EXISTS {table}')
         if not list(PARQUET_DIR.glob(f'{prefix}*.parquet')):
             log.warning(f'{table}: no hay parquet. Ejecuta scrapers/{src}.py primero.')
             continue
-        # One file per quarter (CUIPO) or per year (SICODIS): no overlap to dedupe
-        con.execute(f"CREATE TABLE {table} AS SELECT * FROM read_parquet("
+        # One file per quarter (CUIPO), year (SICODIS, matriz) or month (LMA): no
+        # overlap to dedupe. Co-financing files carry only the municipality code.
+        dep = ', CAST(codigo_mun // 1000 AS INTEGER) AS codigo_dep' if prefix.startswith('cofin_') else ''
+        con.execute(f"CREATE TABLE {table} AS SELECT *{dep} FROM read_parquet("
                     f"'{PARQUET_DIR.as_posix()}/{prefix}*.parquet', union_by_name=True)")
         n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]
         log.info(f'Tabla DuckDB [{table}]: {n:,} filas')

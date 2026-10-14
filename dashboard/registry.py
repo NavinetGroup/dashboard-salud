@@ -50,6 +50,7 @@ SRC = {
     'cuipo':       'CGR — CUIPO (ejecución presupuestal, datos.gov.co)',
     'sicodis':     'DNP — SICODIS (asignaciones SGP)',
     'cuipo_sgp':   'CGR — CUIPO · DNP — SICODIS',
+    'cofin':       'MSPS — matriz de continuidad del régimen subsidiado · ADRES — Liquidación Mensual de Afiliados',
 }
 
 # ── Demográficos ──────────────────────────────────────────────────────────────
@@ -164,7 +165,7 @@ CAPACIDAD = [
     Indicator('uci_ped', 'UCI pediátricas', 'uci_pediatricas', 'camas', icon='child_care', trend='', source='reps'),
 ]
 
-# ── Financiamiento (11) — 1–7 CUIPO (CGR) + SICODIS (DNP); 8 por integrar; 9–11 del cliente ─
+# ── Financiamiento (11) — 1–7 CUIPO (CGR) + SICODIS (DNP); 8 MSPS + ADRES; 9–11 del cliente ─
 # Formulas are a proposal pending Supersalud validation: docs/FINANCIAMIENTO_FORMULAS.md.
 # CUIPO is year-to-date, so values rise through the year; the trend compares the
 # same quarter a year earlier (percentage points).
@@ -186,8 +187,10 @@ FINANCIAMIENTO = [
     _fin('fin5', 'SGP salud pública — pagos', 'fin_sgp_sp_pagos', 'volunteer_activism', 'cuipo_sgp'),
     _fin('fin6', 'SGP subsidio a la oferta — compromisos', 'fin_sgp_of_comp', 'local_hospital', 'cuipo_sgp'),
     _fin('fin7', 'SGP subsidio a la oferta — giros', 'fin_sgp_of_giros', 'sync_alt', 'cuipo_sgp'),
-    Indicator('fin8', 'Cumplimiento meta de cofinanciación régimen subsidiado', None, '%',
-              icon='target', trend='', pending='Matriz de continuidad MSPS + ADRES LMA — por integrar.'),
+    # esfuerzo propio girado (ADRES LMA, acumulado) ÷ meta MSPS prorrateada a esos meses
+    Indicator('fin8', 'Cumplimiento meta de cofinanciación régimen subsidiado', 'fin_cofinanciacion', '%',
+              decimals=1, icon='target', trend='pp', source='cofin', period_col='periodo_cofin',
+              lower_is_better=False),
     Indicator('fin9', 'Deuda Circular 030 de 2013 (pagos / compromisos firmados)', None, '%',
               icon='description', trend='', pending=_CLIENT),
     Indicator('fin10', 'Pagos por prestación de servicios PNA y NPBS', None, '%',

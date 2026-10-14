@@ -2,9 +2,9 @@
 """Financiamiento — ejecución presupuestal y flujos de recursos (FCT).
 
 Indicators 1–7: CUIPO (CGR, quarterly, year-to-date) and SICODIS (DNP, SGP
-allocations), computed in pipeline/metricas.py. The formulas are a proposal
-pending Supersalud validation (docs/FINANCIAMIENTO_FORMULAS.md). 8 needs the
-MSPS co-financing matrix; 9–11 must be supplied by the client.
+allocations); 8: MSPS co-financing matrix + ADRES monthly LMA. Computed in
+pipeline/metricas.py; the formulas are a proposal pending Supersalud
+validation (docs/FINANCIAMIENTO_FORMULAS.md). 9–11 must be supplied by the client.
 """
 
 import streamlit as st
@@ -30,6 +30,8 @@ st.caption(f'{scope}. Ejecución acumulada en el año al corte del trimestre (CU
 
 
 def _note(ind) -> str:
+    if ind.key == 'fin8' and _v(row, ind.col) is not None:
+        return 'Esfuerzo propio girado ÷ meta MSPS prorrateada (100 % = al día)'
     # No SGP subsidio a la oferta allocation (≈⅔ of municipalities) → NULL, not 0 %
     if ind.key in ('fin6', 'fin7') and _v(row, ind.col) is None and _v(row, 'fin_sgp_sp_comp') is not None:
         return 'Sin asignación SGP de subsidio a la oferta'
@@ -52,5 +54,6 @@ _grid(FINANCIAMIENTO[9:], 2)
 
 footer('Ingresos FLS: recaudo con destinación al Fondo Local de Salud (detalle sectorial FLS o fuentes de '
        'salud). Compromisos y pagos: gasto del sector salud (MGA 19) de la vigencia. Indicadores SGP: '
-       'compromisos, pagos o giros recibidos de cada participación ÷ asignación SICODIS del año.',
-       ['cuipo', 'sicodis'])
+       'compromisos, pagos o giros recibidos de cada participación ÷ asignación SICODIS del año. '
+       'Cofinanciación: esfuerzo propio girado al régimen subsidiado (LMA) ÷ meta anual de la matriz MSPS.',
+       ['cuipo', 'sicodis', 'cofin'])

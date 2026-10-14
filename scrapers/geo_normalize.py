@@ -165,6 +165,8 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('sivigila_casos',         'codigo_dep',          'codigo_mun',  True,  None),
     ('demografico_menores5',   'codigo_dep',          'codigo_mun',  True,  None),
     ('cuipo_salud',            'codigo_dep',          'codigo_mun',  True,  None),   # gobernaciones: codigo_mun NULL
+    ('cofin_meta',             'codigo_dep',          'codigo_mun',  True,  None),
+    ('cofin_lma',              'codigo_dep',          'codigo_mun',  True,  None),
     # afiliacion and reps_* are handled via CODE_FIRST_SOURCES
     ('bdua_eps',               'departamento',        'municipio',   False, None),
     ('bdua_piramide',          'departamento',        'municipio',   False, None),

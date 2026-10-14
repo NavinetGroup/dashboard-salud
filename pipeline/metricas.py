@@ -266,6 +266,42 @@ def _fin_sql(group_cols: str, where: str, year, month, caps: dict | None) -> str
     {grp}"""
 
 
+# Indicador 8 — cumplimiento de la meta de cofinanciación del régimen subsidiado:
+# esfuerzo propio girado (ADRES LMA, enero → último mes en alcance) ÷ meta anual de
+# la matriz MSPS prorrateada a esos meses. 100 % = al día con la meta.
+_COFIN_COLS = ('fin_cofinanciacion', 'cofin_girado', 'cofin_meta_anual', 'periodo_cofin')
+_MES_LIST = "LIST_VALUE(" + ", ".join(f"'{m}'" for m in (
+    'ENERO', 'FEBRERO', 'MARZO', 'ABRIL', 'MAYO', 'JUNIO', 'JULIO', 'AGOSTO',
+    'SEPTIEMBRE', 'OCTUBRE', 'NOVIEMBRE', 'DICIEMBRE')) + ")"
+
+
+def _cofin_sql(group_cols: str, where: str, girado: str, meta: str, year, month,
+               caps: dict | None) -> str:
+    """girado / meta: SQL expressions over v_cofin_lma / v_cofin_meta columns
+    (e.g. 'girado_mun' or 'girado_mun + girado_dep'), summed per group."""
+    m = (caps or {}).get('cofin_mes') or (_MESES.index(month) + 1 if month else None)
+    scope = _year_cond(year) + (f" AND mes <= {int(m)}" if m else '')
+    last = f"(SELECT MAX(anio * 100 + mes) AS k FROM v_cofin_lma WHERE {scope})"
+    keys = [c.strip() for c in group_cols.split(',')] if group_cols else []
+    sel = ''.join(f'{c}, ' for c in keys)
+    gsel = ''.join(f'g.{c}, ' for c in keys)
+    on = ''.join(f' AND g.{c} = t.{c}' for c in keys)
+    return f"""
+    SELECT {gsel}100.0 * g.girado / NULLIF(t.meta * (p.k % 100) / 12.0, 0) AS fin_cofinanciacion,
+           g.girado AS cofin_girado, t.meta AS cofin_meta_anual,
+           {_MES_LIST}[p.k % 100] || ' ' || CAST(p.k // 100 AS VARCHAR) AS periodo_cofin
+    FROM {last} p
+    JOIN (SELECT {sel}anio, SUM({girado}) AS girado FROM v_cofin_lma, {last} q
+          WHERE ({where}) AND anio = q.k // 100 AND mes <= q.k % 100
+          GROUP BY {sel}anio) g ON g.anio = p.k // 100
+    JOIN (SELECT {sel}anio, SUM({meta}) AS meta FROM v_cofin_meta
+          WHERE ({where}) GROUP BY {sel}anio) t ON t.anio = g.anio{on}"""
+
+
+def _cofin_null() -> list[str]:
+    return [f'NULL::{"VARCHAR" if c == "periodo_cofin" else "DOUBLE"} AS {c}' for c in _COFIN_COLS]
+
+
 def _fin_null() -> list[str]:
     return [f'NULL::{"VARCHAR" if c == "periodo_cuipo" else "DOUBLE"} AS {c}' for c in _FIN_COLS]
 
@@ -648,6 +684,14 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         select_extra += [f'fin.{c}' for c in _FIN_COLS]
     else:
         select_extra += _fin_null()
+    if ev.get('v_cofin_lma') and ev.get('v_cofin_meta'):
+        ctefile.append(('cofin', _cofin_sql('geo_dep_codigo, geo_mun_codigo', 'geo_mun_codigo IS NOT NULL',
+                                            'girado_mun', 'meta_mun', year, month, caps)))
+        join_clauses.append("LEFT JOIN cofin ON gm.dep_codigo = cofin.geo_dep_codigo "
+                            "AND gm.mun_codigo = cofin.geo_mun_codigo")
+        select_extra += [f'cofin.{c}' for c in _COFIN_COLS]
+    else:
+        select_extra += _cofin_null()
 
     # Unavailable indicators
     select_extra += [
@@ -1046,6 +1090,15 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
         select_extra += [f'fin.{c}' for c in _FIN_COLS]
     else:
         select_extra += _fin_null()
+    if ev.get('v_cofin_lma') and ev.get('v_cofin_meta'):
+        ctefile.append(('cofin', _cofin_sql(
+            'geo_dep_codigo', 'geo_dep_codigo IS NOT NULL',
+            'CASE WHEN geo_dep_codigo = 11 THEN girado_mun ELSE girado_dep END',
+            'CASE WHEN geo_dep_codigo = 11 THEN meta_mun ELSE meta_dep END', year, month, caps)))
+        join_clauses.append("LEFT JOIN cofin ON gd.dep_codigo = cofin.geo_dep_codigo")
+        select_extra += [f'cofin.{c}' for c in _COFIN_COLS]
+    else:
+        select_extra += _cofin_null()
 
     select_extra += [
         'NULL::DOUBLE  AS lsp',
@@ -1110,6 +1163,9 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
         parts.append(('sv', _sv_sql('', 'geo_mun_codigo IS NOT NULL', year, caps, pob_year), _sv_cols()))
     if ev.get('v_cuipo_salud'):   # every territorial entity pooled
         parts.append(('fin', _fin_sql('', 'TRUE', year, month, caps), list(_FIN_COLS)))
+    if ev.get('v_cofin_lma') and ev.get('v_cofin_meta'):   # municipal + departmental effort
+        parts.append(('cofin', _cofin_sql('', 'TRUE', 'girado_mun + girado_dep', 'meta_mun + meta_dep',
+                                          year, month, caps), list(_COFIN_COLS)))
     if ev.get('v_reps_capacidad'):
         parts.append(('cap', f"""
     SELECT {_CAP_TYPES}
@@ -1292,6 +1348,10 @@ def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
         caps['afil_mes'] = month or con.execute(
             f"SELECT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? "
             f"ORDER BY {_MES_CASE} DESC LIMIT 1", [year]).fetchone()[0]
+    if ev.get('v_cofin_lma'):
+        caps['cofin_mes'] = (_MESES.index(month) + 1 if month else
+                             con.execute("SELECT MAX(mes) FROM cofin_lma WHERE anio = ?",
+                                         [year]).fetchone()[0])
     if ev.get('v_cuipo_salud'):
         caps['fin_mes'] = (_MESES.index(month) + 1 if month else
                            con.execute("SELECT MAX(mes) FROM cuipo_salud WHERE anio = ?",
@@ -1332,7 +1392,7 @@ def build_all(db_path: 'str | Path') -> None:
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
             'v_bdua_eps', 'v_bdua_piramide',
             'v_sivigila_casos', 'v_demografico_menores5',
-            'v_cuipo_salud',
+            'v_cuipo_salud', 'v_cofin_lma', 'v_cofin_meta',
         ]}
         missing = [k for k, v in ev.items() if not v]
         if missing:

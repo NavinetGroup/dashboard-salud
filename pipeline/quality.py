@@ -43,7 +43,7 @@ _TRACKED = [
     'reps_prestadores', 'reps_sedes', 'reps_servicios', 'reps_capacidad',
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
-    'bdua_eps', 'bdua_piramide', 'sivigila_casos', 'cuipo_salud', 'sgp_salud',
+    'bdua_eps', 'bdua_piramide', 'sivigila_casos', 'cuipo_salud', 'sgp_salud', 'cofin_lma',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -317,6 +317,25 @@ class _Checks:
             if r[0] is not None:
                 self.add('fin_rango_nacional', 'warn', 5 <= r[0] <= 105 and 0 <= (r[1] or 0) <= 150,
                          f'nacional: compromisos/apropiación {r[0]:.1f} %, SGP salud pública {r[1] or 0:.1f} %')
+
+        # Co-financing (indicator 8): both sides keyed by DIVIPOLA municipality.
+        # DD000 rows are the áreas no municipalizadas of Amazonas, Guainía and
+        # Vaupés: they count toward their department, not a municipality.
+        for t in ('v_cofin_meta', 'v_cofin_lma'):
+            if self.has(t):
+                bad, n = self.one(f"""SELECT COUNT(*) FILTER (WHERE geo_mun_dane IS NULL), COUNT(*)
+                                      FROM {t} WHERE codigo_mun % 1000 <> 0""")
+                self.add(f'{t[2:]}_match_municipio', 'error', bad == 0,
+                         f'{bad} de {n:,} filas sin municipio DANE')
+        if self.has('cofin_lma'):
+            y, m = self.one("SELECT anio, mes FROM cofin_lma ORDER BY anio DESC, mes DESC LIMIT 1")
+            age = (self.today.year - y) * 12 + self.today.month - m
+            # ADRES publishes each month's LMA early in that month
+            self.add('frescura_lma', 'warn', age <= 1, f'última LMA {y}-{m:02d} ({age} meses)')
+            if self.has('cofin_meta'):
+                ok = self.one(f"SELECT COUNT(*) FROM cofin_meta WHERE anio = {y}")[0] > 0
+                self.add('cofin_meta_vigente', 'error', ok,
+                         f'matriz MSPS de {y} {"cargada" if ok else "no encontrada"}')
 
     # -- 7. row-count jumps vs previous load ----------------------------------
     def row_jumps(self) -> None:

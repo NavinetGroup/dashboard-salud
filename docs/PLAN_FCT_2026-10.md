@@ -71,8 +71,7 @@ Common elements: Supersalud branding, icon-led KPI cards, a source/period footer
 | # | Status | Notes |
 |---|---|---|
 | 1–7 | ✅ | CUIPO (CGR, quarterly) + SICODIS (DNP). Built 2026-10-13; formulas pending client validation (docs/FINANCIAMIENTO_FORMULAS.md) |
-| 7 | 🔵/🔴 | SGP supply-subsidy transfers |
-| 8 | 🔵 | Co-financing: MinSalud matrix + ADRES LMA |
+| 8 | ✅ | MSPS continuity matrix (target) + ADRES monthly LMA (executed); LMA matches MSPS executed matrix 2025 exactly |
 | 9–11 | 🔴 | Circular 030, PNA/NPBS, migrants: from the client |
 
 ## 3. Phases
