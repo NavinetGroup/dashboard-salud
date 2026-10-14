@@ -74,7 +74,7 @@ from streamlit.web import cli
 sys.exit(cli.main())
 '''
 
-README = f'''INFORME REGIONAL DE SALUD — Supersalud
+README = '''INFORME REGIONAL DE SALUD — Supersalud
 =====================================
 
 ABRIR

@@ -198,7 +198,6 @@ def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str)
     wk = _sv_week(year, caps)
     yr = f'anio = {int(year)}' if year is not None else \
          '(anio = (SELECT MAX(anio) FROM sivigila_casos))'
-    key = level_cols or "'nacional'"
     grp = f'GROUP BY {level_cols}' if level_cols else ''
     # population denominators at this level
     pob_key = level_cols.split(',')[-1].strip() if level_cols else None

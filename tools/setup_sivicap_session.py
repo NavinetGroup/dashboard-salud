@@ -65,7 +65,7 @@ def main() -> None:
             print()
             print('=' * 70)
             print('  En la ventana de Chrome:')
-            print(f'    1. Las credenciales ya están llenadas')
+            print('    1. Las credenciales ya están llenadas')
             print(f'       ({SIVICAP_USER} / {SIVICAP_PASS})')
             print('    2. Resuelve el reCAPTCHA (clic en "No soy un robot")')
             print('    3. Haz clic en "Iniciar sesión"')

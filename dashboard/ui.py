@@ -118,8 +118,6 @@ def inject_css() -> None:
     color: var(--c, #546E7A); font-weight: normal; font-style: normal; letter-spacing: normal;
     text-transform: none; white-space: nowrap; -webkit-font-feature-settings: 'liga';
     font-feature-settings: 'liga'; -webkit-font-smoothing: antialiased; }}
-.fct-trend  {{ font-size: 11.5px; margin-top: 6px; padding: 3px 8px; border-radius: 8px;
-    background: #F5F7F8; display: inline-block; }}
 /* scale bar (IRCA risk, capacities, co-financing): coloured segments + marker */
 .fct-scale {{ position: relative; margin: 14px 4px 0 4px; }}
 .fct-scale .seg {{ display: flex; gap: 3px; height: 9px; }}
@@ -250,15 +248,6 @@ def _trend(ind: Indicator, cur, prev, prev_period: str | None, period: str | Non
         arrow = '▼' if delta < 0 else '▲'
     ref = f'vs. {html.escape(prev_period)}' if prev_period else 'vs. año anterior'
     return arrow, txt, color, ref
-
-
-def trend_md(ind: Indicator, cur, prev, prev_period: str | None, period: str | None = None) -> str:
-    """'▼ -12,5% vs. 2025 PE IX' coloured green/red by whether the change is good."""
-    tr = _trend(ind, cur, prev, prev_period, period)
-    if not tr:
-        return ''
-    arrow, txt, color, ref = tr
-    return f'<span class="fct-trend" style="color:{color}">{arrow} <b>{txt}</b> {ref}</span>'
 
 
 _TBOX_BG = {_GOOD: '#E8F5E9', _BAD: '#FDECEA', _FLAT: '#FFF8E1'}
@@ -432,7 +421,7 @@ def panel(module: str, title: str, icon: str = '', subtitle: str = ''):
 def chart(fig, key: str | None = None) -> None:
     """Plotly figure with the dashboard's settings: no toolbar, and no scroll-zoom
     (the mouse wheel scrolls the page, not the map)."""
-    st.plotly_chart(fig, use_container_width=True, key=key,
+    st.plotly_chart(fig, width='stretch', key=key,
                     config={'displayModeBar': False, 'scrollZoom': False})
 
 

@@ -38,13 +38,6 @@ def _write_parquet(df: pl.DataFrame, name: str) -> Path:
     return out
 
 
-def _register_table(con: duckdb.DuckDBPyConnection, name: str, parquet_path: Path) -> None:
-    con.execute(f"DROP TABLE IF EXISTS {name}")
-    con.execute(f"CREATE TABLE {name} AS SELECT * FROM read_parquet('{parquet_path.as_posix()}')")
-    count = con.execute(f"SELECT COUNT(*) FROM {name}").fetchone()[0]
-    log.info(f'Tabla DuckDB [{name}]: {count:,} filas')
-
-
 _SNAPSHOT_RE = re.compile(r'_(\d{4})_(\d{2})$')
 
 
