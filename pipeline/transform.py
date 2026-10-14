@@ -186,21 +186,31 @@ def transform_ips(con: duckdb.DuckDBPyConnection) -> None:
 # ---------------------------------------------------------------------------
 
 def transform_sivigila(con: duckdb.DuckDBPyConnection) -> None:
-    files = sorted(PARQUET_DIR.glob('sivigila_casos_*.parquet'))
-    if not files:
+    micro = sorted(PARQUET_DIR.glob('sivigila_casos_*.parquet'))
+    prelim = sorted(PARQUET_DIR.glob('sivigila_rutinaria_*.parquet'))
+    if not micro and not prelim:
         log.warning('sivigila: no hay parquet. Ejecuta scrapers/sivigila_scraper.py primero.')
         return
-    glob = f'{PARQUET_DIR.as_posix()}/sivigila_casos_*.parquet'
     con.execute('DROP TABLE IF EXISTS sivigila_casos')
-    # One parquet per year, each a full rebuild of that year: no overlap to dedupe.
+    # Final microdata (one parquet per year) win; the weekly dashboard extract
+    # ('rutinaria', preliminary) only fills years that have no microdata yet.
+    parts = []
+    if micro:
+        parts.append(f"SELECT *, 'microdatos' AS fuente FROM read_parquet('{PARQUET_DIR.as_posix()}/sivigila_casos_*.parquet')")
+    if prelim:
+        excl = (f"WHERE anio NOT IN (SELECT DISTINCT anio FROM read_parquet("
+                f"'{PARQUET_DIR.as_posix()}/sivigila_casos_*.parquet'))" if micro else '')
+        parts.append(f"SELECT *, 'rutinaria' AS fuente FROM read_parquet("
+                     f"'{PARQUET_DIR.as_posix()}/sivigila_rutinaria_*.parquet') {excl}")
     con.execute(f"""CREATE TABLE sivigila_casos AS
                     SELECT evento, anio, semana,
                            TRY_CAST(cod_dpto AS INTEGER) AS codigo_dep,
                            TRY_CAST(cod_mun AS INTEGER)  AS codigo_mun,
-                           casos
-                    FROM read_parquet('{glob}')""")
+                           casos, fuente
+                    FROM ({' UNION ALL BY NAME '.join(parts)})""")
     n, yrs = con.execute('SELECT COUNT(*), LIST(DISTINCT anio ORDER BY anio) FROM sivigila_casos').fetchone()
-    log.info(f'Tabla DuckDB [sivigila_casos]: {n:,} filas (años {yrs})')
+    fuentes = con.execute("SELECT LIST(DISTINCT anio || ':' || fuente ORDER BY anio || ':' || fuente) FROM sivigila_casos").fetchone()[0]
+    log.info(f'Tabla DuckDB [sivigila_casos]: {n:,} filas ({fuentes})')
 
 
 # ---------------------------------------------------------------------------

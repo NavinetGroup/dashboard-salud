@@ -138,6 +138,157 @@ def aggregate(path: Path, evento: str, anio: int) -> pl.DataFrame:
     return agg
 
 
+# ---------------------------------------------------------------------------
+# Phase 2 — current year from the INS public Power BI dashboard "006 Vigilancia
+# Rutinaria" (refreshed weekly). Its table "Rutinaria <año>" holds
+# evento × semana × departamento × municipio de procedencia × conteo.
+# Preliminary: notified cases, before the adjustments that the annual microdata
+# apply. Validated 2026 sem 1–36 vs INS bulletin PE IX: dengue grave 793 vs 791,
+# violencia de género 110,818 vs 109,596.
+#
+# The querydata API is public but undocumented. Everything is discovered by name
+# on every run (report key from the portal menu, model id, table name), and only
+# the Rutinaria table is ever queried: some INS models also hold tables with
+# personal data, which this pipeline must never read.
+# ---------------------------------------------------------------------------
+
+PBI = 'https://wabi-south-central-us-api.analysis.windows.net'
+MENU_URL = f"{PORTAL}/_api/web/lists/GetByTitle('MenuReporteNivel2')/items?$top=500"
+RUTINARIA_TITLE = '006 Vigilancia Rutinaria'
+RUTINARIA_EVENTS = ('113', '220', '356', '875', '740')   # 112 is reported inside 591 in-year
+PBI_MAX_ROWS = 30_000
+
+
+def _pbi_post(key: str, path: str, body: dict) -> dict:
+    import gzip
+    for attempt in range(4):
+        try:
+            r = requests.post(f'{PBI}{path}', data=json.dumps(body), timeout=(15, 300),
+                              headers={'X-PowerBI-ResourceKey': key, 'Content-Type': 'application/json'})
+            if r.status_code == 200:
+                b = r.content
+                return json.loads(gzip.decompress(b) if b[:2] == b'\x1f\x8b' else b)
+            log.warning(f'sivigila PBI: HTTP {r.status_code}, reintento {attempt + 1}/4')
+        except requests.RequestException as e:
+            log.warning(f'sivigila PBI: {e}, reintento {attempt + 1}/4')
+        time.sleep(20 * (attempt + 1))
+    raise ScrapeError(f'sivigila PBI: sin respuesta en {path}')
+
+
+def _rutinaria_source(s: requests.Session) -> tuple[str, int, str, int]:
+    """(report key, model id, table name, year) — all discovered, nothing hard-coded."""
+    import base64
+    import re
+    items = _get(s, MENU_URL, headers={'Accept': 'application/json;odata=nometadata'}).json().get('value', [])
+    key = None
+    for it in items:
+        if RUTINARIA_TITLE.lower() in json.dumps(it, ensure_ascii=False).lower():
+            m = re.search(r'app\.powerbi\.com/view\?r=([A-Za-z0-9=_\-]+)', json.dumps(it))
+            if m:
+                raw = m.group(1)
+                key = json.loads(base64.b64decode(raw + '=' * (-len(raw) % 4)))['k']
+                break
+    if not key:
+        raise ScrapeError(f'sivigila PBI: el menú del portal ya no lista "{RUTINARIA_TITLE}"')
+    r = _get(s, f'{PBI}/public/reports/{key}/modelsAndExploration?preferReadOnlySession=true',
+             headers={'X-PowerBI-ResourceKey': key})
+    model = r.json()['models'][0]['id']
+    schema = _pbi_post(key, '/public/reports/conceptualschema', {'modelIds': [model]})
+    tables = {}
+    for e in schema['schemas'][0]['schema']['Entities']:
+        m = re.fullmatch(r'Rutinaria (\d{4})', e['Name'].strip())
+        if m:
+            tables[int(m.group(1))] = e['Name']
+    if not tables:
+        raise ScrapeError('sivigila PBI: el modelo ya no tiene una tabla "Rutinaria <año>"')
+    year = max(tables)
+    return key, model, tables[year], year
+
+
+def _pbi_sum(key: str, model: int, table: str, group: list[str], where: list[tuple]) -> tuple[list, bool]:
+    """SELECT group, SUM(conteo) FROM table WHERE ... → (rows, truncated)."""
+    src = {'SourceRef': {'Source': 't'}}
+    sel = [{'Column': {'Expression': src, 'Property': c}, 'Name': c} for c in group]
+    sel.append({'Aggregation': {'Expression': {'Column': {'Expression': src, 'Property': 'conteo'}},
+                                'Function': 0}, 'Name': 'conteo'})
+    q = {'Version': 2, 'From': [{'Name': 't', 'Entity': table, 'Type': 0}], 'Select': sel,
+         'Where': [{'Condition': {'In': {
+             'Expressions': [{'Column': {'Expression': src, 'Property': c}}],
+             'Values': [[{'Literal': {'Value': v}}] for v in vals]}}} for c, vals in where]}
+    n = len(sel)
+    body = {'version': '1.0.0', 'modelId': model, 'queries': [{'Query': {'Commands': [
+        {'SemanticQueryDataShapeCommand': {'Query': q, 'Binding': {
+            'Primary': {'Groupings': [{'Projections': list(range(n))}]},
+            'DataReduction': {'DataVolume': 4, 'Primary': {'Top': {'Count': PBI_MAX_ROWS}}},
+            'Version': 1}}}]}}]}
+    res = _pbi_post(key, '/public/reports/querydata?synchronous=true', body)['results'][0]['result']
+    if 'data' not in res:
+        raise ScrapeError(f'sivigila PBI: consulta rechazada: {json.dumps(res)[:300]}')
+    ds = res['data']['dsr']['DS'][0]
+    vd = ds.get('ValueDicts', {})
+    dm = ds['PH'][0].get('DM0', [])
+    dicts = [x.get('DN') for x in (dm[0].get('S', []) if dm else [])] + [None] * n
+    rows, prev = [], [None] * n
+    for row in dm:
+        c, rep, nul = iter(row.get('C', [])), row.get('R', 0), row.get('Ø', 0)
+        out = []
+        for i in range(n):
+            if rep & (1 << i):
+                out.append(prev[i])
+            elif nul & (1 << i):
+                out.append(None)
+            else:
+                v = next(c, None)
+                out.append(vd[dicts[i]][v] if dicts[i] and isinstance(v, int) else v)
+        rows.append(out)
+        prev = out
+    return rows, 'DLEx' in ds
+
+
+def rutinaria(s: requests.Session, parquet_dir: Path) -> Path | None:
+    """Write sivigila_rutinaria_<año>.parquet for the dashboard's current year."""
+    key, model, table, anio = _rutinaria_source(s)
+    frames = []
+    for ev in RUTINARIA_EVENTS:
+        lit = f'{int(ev)}L'
+        weekly, _ = _pbi_sum(key, model, table, ['semana'], [('cod_eve', [lit])])
+        expected = sum(v for _, v in weekly if v)
+        rows, truncated = _pbi_sum(key, model, table, ['semana', 'Cod_Departamento', 'Cod_municipio'],
+                                   [('cod_eve', [lit])])
+        if truncated:   # > 30,000 week × municipality cells: one query per department
+            depts, _ = _pbi_sum(key, model, table, ['Cod_Departamento'], [('cod_eve', [lit])])
+            rows = []
+            for (d, _) in depts:
+                part, tr = _pbi_sum(key, model, table, ['semana', 'Cod_Departamento', 'Cod_municipio'],
+                                    [('cod_eve', [lit]), ('Cod_Departamento', [f"'{d}'"])])
+                if tr:
+                    raise ScrapeError(f'sivigila PBI: {ev} dpto {d} sigue truncado')
+                rows += part
+        got = sum(r[3] for r in rows if r[3])
+        if got != expected:   # the detail must add up to the weekly totals
+            raise ScrapeError(f'sivigila PBI: {ev} detalle {got:,} ≠ total semanal {expected:,}')
+        frames.append(pl.DataFrame(rows, schema=['semana', 'cod_dpto', 'cod_mun', 'casos'], orient='row')
+                      .with_columns(pl.lit(ev).alias('evento')))
+    df = pl.concat(frames)
+    # The newest week is still being loaded (2026-10-10: week 40 had 157 suicide
+    # attempts vs ~800 in a full week): keep complete weeks only.
+    last = df['semana'].max()
+    df = (df.filter((pl.col('semana') < last) & (pl.col('cod_dpto') != '01'))   # '01' = exterior
+            .with_columns(pl.col('semana').cast(pl.Int32), pl.col('casos').cast(pl.UInt32),
+                          pl.col('cod_mun').cast(pl.Utf8).str.zfill(5),
+                          pl.col('cod_dpto').cast(pl.Utf8).str.zfill(2),
+                          pl.lit(anio, dtype=pl.Int32).alias('anio'))
+            .group_by('evento', 'anio', 'semana', 'cod_dpto', 'cod_mun').agg(pl.col('casos').sum())
+            .select('evento', 'anio', 'semana', 'cod_dpto', 'cod_mun', 'casos')
+            .sort('evento', 'semana', 'cod_mun'))
+    out = parquet_dir / f'sivigila_rutinaria_{anio}.parquet'
+    df.write_parquet(out, compression='zstd', use_pyarrow=True)
+    log.info(f'SIVIGILA rutinaria {anio}: semanas 1–{last - 1} (sem. {last} incompleta, excluida), '
+             f'{df["casos"].sum():,} casos, {df.height:,} filas')
+    print(f'  -> {out} (preliminar, semanas 1–{last - 1})')
+    return out
+
+
 def run(base_dir: str = None, start_year: int = START_YEAR) -> None:
     base_dir = Path(base_dir) if base_dir else Path(__file__).resolve().parent.parent
     raw_dir = base_dir / 'data' / 'raw' / 'sivigila'
@@ -180,6 +331,15 @@ def run(base_dir: str = None, start_year: int = START_YEAR) -> None:
             stamp.write_text(json.dumps(current))
             written.append(out.name)
             print(f'  -> {out} ({df.height:,} filas, {df["casos"].sum():,} casos)')
+
+    # Phase 2: the dashboard's running year, until its final microdata appear.
+    # Failure is reported but does not undo the microdata; the dashboard then
+    # falls back to the PDF bulletin for that year.
+    try:
+        rutinaria(s, parquet_dir)
+    except (ScrapeError, requests.RequestException, KeyError, ValueError) as e:
+        log.error(f'SIVIGILA rutinaria: {e}')
+        failed.append('rutinaria (año en curso)')
 
     if failed:
         raise ScrapeError(f'sivigila: fallaron {", ".join(failed)}')

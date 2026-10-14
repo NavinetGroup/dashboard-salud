@@ -201,13 +201,16 @@ def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str)
                 f"v_demografico_menores5 WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) m")
     sel = []
     for code, pre, den in _SV_EVENTS:
-        sel.append(f"COALESCE(SUM(casos) FILTER (WHERE evento = '{code}'), 0) AS {pre}_casos")
+        avail = f"EXISTS (SELECT 1 FROM sivigila_casos WHERE evento = '{code}' AND {yr})"
+        n_ev = f"COALESCE(SUM(casos) FILTER (WHERE evento = '{code}'), 0)"
+        sel.append(f"CASE WHEN {avail} THEN {n_ev} END AS {pre}_casos")
         if den:
             scale = _SV_SCALE.get(pre, 100000.0)
-            sel.append(f"{scale} * COALESCE(SUM(casos) FILTER (WHERE evento = '{code}'), 0) "
-                       f"/ NULLIF(ANY_VALUE({den}), 0) AS {pre}_tasa")
+            sel.append(f"CASE WHEN {avail} THEN {scale} * {n_ev} / NULLIF(ANY_VALUE({den}), 0) END AS {pre}_tasa")
     sel.append(f"{wk} AS sv_semana")
-    sel.append(f"(CAST(ANY_VALUE(anio) AS VARCHAR) || ' sem. 1–{wk}') AS periodo_sivigila")
+    # Preliminary weekly extract (current year) is labelled; final microdata are not
+    sel.append(f"(CAST(ANY_VALUE(anio) AS VARCHAR) || ' sem. 1–{wk}' || "
+               f"CASE WHEN BOOL_OR(fuente = 'rutinaria') THEN ' (preliminar)' ELSE '' END) AS periodo_sivigila")
     return f"""
     SELECT {level_cols + ', ' if level_cols else ''}{', '.join(sel)}
     FROM (SELECT c.*, p.pob, m.men5 FROM v_sivigila_casos c {join_pob}
@@ -574,10 +577,12 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         ctefile.append(('sv', _sv_sql('geo_dep_codigo, geo_mun_codigo',
                                       'geo_mun_codigo IS NOT NULL', year, caps, pob_year)))
         join_clauses.append("LEFT JOIN sv ON gm.dep_codigo = sv.geo_dep_codigo AND gm.mun_codigo = sv.geo_mun_codigo")
-        # A territory with no row in sv has zero cases, but only when the year's
-        # microdata exist at all (otherwise NULL, so the dashboard can fall back
-        # to the PDF bulletin). EXISTS (SELECT 1 FROM sv) is that test.
-        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv) THEN COALESCE(sv.{c}, 0) END AS {c}'
+        # A territory with no row in sv has zero cases, but only when that event
+        # has data for the year at all (otherwise NULL, so the dashboard falls
+        # back to the PDF bulletin; e.g. event 112 is absent from the in-year
+        # extract).
+        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv WHERE sv.{c} IS NOT NULL) '
+                         f'THEN COALESCE(sv.{c}, 0) END AS {c}'
                          if c.endswith(('_casos', '_tasa')) else
                          f'COALESCE(sv.{c}, (SELECT ANY_VALUE({c}) FROM sv)) AS {c}'
                          for c in _sv_cols()]
@@ -960,10 +965,12 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     if ev.get('v_sivigila_casos') and ev.get('v_demografico_menores5'):
         ctefile.append(('sv', _sv_sql('geo_dep_codigo', 'geo_dep_codigo IS NOT NULL', year, caps, pob_year)))
         join_clauses.append("LEFT JOIN sv ON gd.dep_codigo = sv.geo_dep_codigo")
-        # A territory with no row in sv has zero cases, but only when the year's
-        # microdata exist at all (otherwise NULL, so the dashboard can fall back
-        # to the PDF bulletin). EXISTS (SELECT 1 FROM sv) is that test.
-        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv) THEN COALESCE(sv.{c}, 0) END AS {c}'
+        # A territory with no row in sv has zero cases, but only when that event
+        # has data for the year at all (otherwise NULL, so the dashboard falls
+        # back to the PDF bulletin; e.g. event 112 is absent from the in-year
+        # extract).
+        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv WHERE sv.{c} IS NOT NULL) '
+                         f'THEN COALESCE(sv.{c}, 0) END AS {c}'
                          if c.endswith(('_casos', '_tasa')) else
                          f'COALESCE(sv.{c}, (SELECT ANY_VALUE({c}) FROM sv)) AS {c}'
                          for c in _sv_cols()]

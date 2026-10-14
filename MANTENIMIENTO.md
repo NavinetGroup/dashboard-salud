@@ -27,6 +27,7 @@ Estos scrapers descargan datos sin intervención humana:
 | BDUA (EPS por territorio, pirámide de afiliados) | API de datos.gov.co (`d7a5-cnra`, `tq4m-hmg2`). Solo publica el mes vigente: cada corrida archiva su foto en `data/parquet/bdua_*_YYYY_MM.parquet` (no borrarlas: son la única serie histórica) |
 | INS PDFs (6 indicadores) | URLs públicas del INS. Solo se usan para el año en curso y para la razón de mortalidad materna |
 | INS SIVIGILA microdatos (6 eventos, todos los municipios) | Portal SIVIGILA (SharePoint REST). Archivos anuales finales; el año en curso sale ~agosto del siguiente. Los xlsx crudos (hasta 110 MB) quedan en `data/raw/sivigila/` y solo se vuelven a bajar si el INS los modificó |
+| INS SIVIGILA año en curso (preliminar) | Tablero público "006 Vigilancia Rutinaria" del INS (API pública de Power BI, sin login). Semanas completas hasta ~2 semanas atrás; se rotula "(preliminar)". Cuando el INS publique los microdatos finales de ese año, reemplazan automáticamente al preliminar. Si el control `frescura_sivigila_preliminar` avisa, revisar que el tablero siga existiendo con ese nombre |
 
 Para correr el ciclo completo:
 

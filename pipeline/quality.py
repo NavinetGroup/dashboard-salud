@@ -254,6 +254,17 @@ class _Checks:
                 y, m = int(snap[:4]), int(snap[5:7])
                 age = months_since(y, m)
                 self.add('frescura_reps', 'warn', age <= 2, f'snapshot {snap} ({age} meses)')
+        # SIVIGILA weekly extract (current year, preliminary): should trail today by
+        # a week or two; more means the INS dashboard or our query stopped updating.
+        if self.has('sivigila_casos'):
+            row = self.one("SELECT anio, MAX(semana) FROM sivigila_casos WHERE fuente = 'rutinaria' GROUP BY anio "
+                           "ORDER BY anio DESC LIMIT 1")
+            if row:
+                y, wk = row
+                cur_wk = self.today.isocalendar().week if self.today.year == y else 53
+                lag = cur_wk - wk
+                self.add('frescura_sivigila_preliminar', 'warn', lag <= 3,
+                         f'{y} hasta semana {wk} (semana actual {cur_wk}, {lag} de atraso)')
         # INS periods are ~4 weeks; PE n ends around week 4n of the year
         for t in ('ins_dengue', 'ins_mortalidad_materna', 'ins_desnutricion_aguda',
                   'ins_intento_suicidio', 'ins_violencia_genero'):
