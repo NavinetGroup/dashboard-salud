@@ -117,17 +117,22 @@ def kpi_card(module: str, ind: Indicator, row, prev=None, note: str = '') -> Non
     if ind.col is None:
         return pending_card(module, ind)
     color = MODULES[module][1]
-    cur = _v(row, ind.col)
+    col, period_col = ind.col, ind.period_col
+    cur = _v(row, col)
+    if cur is None and ind.fallback and _v(row, ind.fallback[0]) is not None:
+        col, period_col, fb_note = ind.fallback
+        cur = _v(row, col)
+        note = ' · '.join(x for x in (fb_note, note) if x)
     with st.container(border=True, key=f'card-{module}-{ind.key}'):
         st.markdown(f':material/{ind.icon}: <span class="fct-label">{html.escape(ind.label)}</span>',
                     unsafe_allow_html=True)
-        prev_period = _v(prev, ind.period_col) if ind.period_col else None
-        period = _v(row, ind.period_col) if ind.period_col else None
+        prev_period = _v(prev, period_col) if period_col else None
+        period = _v(row, period_col) if period_col else None
         st.markdown(
             f'<div class="fct-value" style="color:{color if cur is not None else "#B0BEC5"}">'
             f'{fmt(ind, cur)}</div>'
             f'<div class="fct-unit">{html.escape(ind.unit if ind.unit != "%" else "")}</div>'
-            f'{trend_md(ind, cur, _v(prev, ind.col), prev_period, period)}'
+            f'{trend_md(ind, cur, _v(prev, col), prev_period, period)}'
             + (f'<div class="fct-period">Datos: {html.escape(str(period))}</div>' if period else '')
             + (f'<div class="fct-pend">{html.escape(note)}</div>' if note else ''),
             unsafe_allow_html=True)

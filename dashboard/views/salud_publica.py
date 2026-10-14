@@ -16,7 +16,8 @@ def _pick(ind):
     municipalities; districts report as entities), else its department's."""
     if ind.col is None:
         return None, None, ''
-    if sel.use_mun and _v(sel.mun_row, ind.col) is not None:
+    cols = [ind.col] + ([ind.fallback[0]] if ind.fallback else [])
+    if sel.use_mun and any(_v(sel.mun_row, c) is not None for c in cols):
         return sel.mun_row, sel.prev_mun, ''
     if sel.use_mun:
         return sel.dept_row, sel.prev_dept, f'Sin dato municipal: valor de {sel.dept_name}'
@@ -31,7 +32,7 @@ for i in range(0, len(inds), 4):
             if ind.key == 'irca':
                 lvl = _v(row, 'irca_nivel_riesgo')
                 note = ' · '.join(x for x in (f'Riesgo: {lvl}' if lvl else '', note) if x)
-            if ind.key in ('dnt', 'suicidio') and not sel.use_mun:
+            if ind.key in ('dnt', 'suicidio') and not sel.use_mun and _v(row, ind.col) is None:
                 n = _v(sel.dept_row, 'desnutricion_municipios_reportados' if ind.key == 'dnt'
                        else 'suicidio_municipios_reportados')
                 if n:

@@ -25,6 +25,9 @@ class Indicator:
     period_col: str | None = None
     dept_only: bool = False    # no municipal value (INS entity tables)
     pending: str = ''          # why it is missing and where it will come from
+    # (col, period_col, note): shown when `col` has no value for the selection,
+    # e.g. the INS PDF bulletin while the year's SIVIGILA microdata aren't out yet
+    fallback: tuple | None = None
 
 
 # ── Módulos (order and colours from the mockups) ─────────────────────────────
@@ -43,7 +46,7 @@ SRC = {
     'reps':        'MSPS — REPS',
     'supersalud':  'Supersalud — entidades en medida especial',
     'sivicap':     'INS — SIVICAP',
-    'sivigila':    'INS — SIVIGILA (boletines por periodo epidemiológico)',
+    'sivigila':    'INS — SIVIGILA (microdatos anuales; boletín PDF para el año en curso)',
     'cuipo':       'CGR — CUIPO / MSPS',
 }
 
@@ -66,30 +69,40 @@ ETNIAS = [   # (column, label, colour) — colours from the mockup
 ]
 
 # ── Salud pública (11) ────────────────────────────────────────────────────────
+# Cards read the SIVIGILA microdata (final, all municipalities). For a year whose
+# microdata aren't published yet (the current year), they fall back to the INS
+# PDF bulletin and say so.
+_PDF_NOTE = 'Boletín INS (preliminar): microdatos SIVIGILA aún no publicados para este año'
+_PDF_NOTE_LISTED = _PDF_NOTE + '; solo municipios listados en el boletín'
 SALUD_PUBLICA = [
     Indicator('mm', 'Razón de mortalidad materna', 'razon_mortalidad_materna',
               'por 100.000 nacidos vivos', 1, 'pregnant_woman', True, source='sivigila',
               period_col='periodo_mortalidad_materna'),
-    Indicator('sifilis', 'Sífilis congénita', 'casos_sifilis_congenita', 'casos', 0,
-              'child_care', True, 'abs', source='sivigila', period_col='periodo_sifilis', dept_only=True),
+    Indicator('sifilis', 'Sífilis congénita', 'sv_sifilis_casos', 'casos', 0,
+              'child_care', True, 'abs', source='sivigila', period_col='periodo_sivigila',
+              fallback=('casos_sifilis_congenita', 'periodo_sifilis', _PDF_NOTE)),
     Indicator('dnt', 'Prevalencia de desnutrición aguda en menores de 5 años',
-              'prevalencia_desnutricion_aguda', '%', 2, 'child_friendly', True, 'pp',
-              source='sivigila', period_col='periodo_desnutricion'),
+              'sv_desnutricion_tasa', '%', 2, 'child_friendly', True, 'pp',
+              source='sivigila', period_col='periodo_sivigila',
+              fallback=('prevalencia_desnutricion_aguda', 'periodo_desnutricion', _PDF_NOTE_LISTED)),
     Indicator('mort_dnt', 'Tasa de mortalidad en menores de 5 años por desnutrición',
-              'tasa_mortalidad_menores5_dnt', 'por 100.000 menores de 5 años', 2,
-              'footprint', True, source='sivigila', period_col='periodo_menores5', dept_only=True),
+              'sv_mort_desnutricion_tasa', 'por 100.000 menores de 5 años', 2,
+              'footprint', True, source='sivigila', period_col='periodo_sivigila',
+              fallback=('tasa_mortalidad_menores5_dnt', 'periodo_menores5', _PDF_NOTE)),
     Indicator('irca', 'Índice de riesgo de la calidad del agua (IRCA)', 'irca_promedio',
               'puntos (0–100)', 1, 'water_drop', True, source='sivicap', period_col='irca_periodo'),
-    Indicator('dengue_grave', 'Incidencia de dengue grave', None, 'por 100.000 hab.', 2,
-              'pest_control', True, trend='',
-              pending='En revisión: el boletín PDF del INS no distingue bien el dengue grave. '
-                      'Se calculará con microdatos SIVIGILA.'),
-    Indicator('suicidio', 'Tasa de incidencia de intento de suicidio', 'tasa_intento_suicidio',
+    Indicator('dengue_grave', 'Incidencia de dengue grave', 'sv_dengue_grave_tasa',
+              'por 100.000 hab.', 2, 'pest_control', True, source='sivigila',
+              period_col='periodo_sivigila'),
+    Indicator('suicidio', 'Tasa de incidencia de intento de suicidio', 'sv_suicidio_tasa',
               'por 100.000 hab.', 1, 'volunteer_activism', True, source='sivigila',
-              period_col='periodo_suicidio'),
-    Indicator('violencia', 'Violencia de género e intrafamiliar (violencia física)',
-              'violencia_fisica', 'por 100.000 hab.', 1, 'front_hand', True, source='sivigila',
-              period_col='periodo_violencia', dept_only=True),
+              period_col='periodo_sivigila',
+              fallback=('tasa_intento_suicidio', 'periodo_suicidio', _PDF_NOTE_LISTED)),
+    Indicator('violencia', 'Tasa de notificación de violencia de género e intrafamiliar',
+              'sv_violencia_tasa', 'por 100.000 hab.', 1, 'front_hand', True, source='sivigila',
+              period_col='periodo_sivigila',
+              fallback=('violencia_fisica', 'periodo_violencia',
+                        'Boletín INS (preliminar): solo violencia física, nivel departamental')),
     Indicator('lsp', 'Cumplimiento de estándares de calidad de los LSP', None, '%',
               icon='biotech', trend='', pending='No publicado: INS Dirección de Redes. Solicitar vía Supersalud.'),
     Indicator('vsp', 'Cumplimiento de indicadores de gestión en VSP', None, '%',

@@ -162,6 +162,8 @@ GEO_SOURCES: list[tuple[str, str, str | None, bool, str | None]] = [
     ('demografico_edad_sexo',  'codigo_dep',          'codigo_mun',  True,  None),
     ('demografico_etnico',     'codigo_dep',          'codigo_mun',  True,  None),
     ('irca',                   'codigo_dep',          'codigo_mun',  True,  None),
+    ('sivigila_casos',         'codigo_dep',          'codigo_mun',  True,  None),
+    ('demografico_menores5',   'codigo_dep',          'codigo_mun',  True,  None),
     # afiliacion and reps_* are handled via CODE_FIRST_SOURCES
     ('bdua_eps',               'departamento',        'municipio',   False, None),
     ('bdua_piramide',          'departamento',        'municipio',   False, None),

@@ -135,6 +135,86 @@ def _eps_counts(group_cols: str, where: str) -> str:
 
 _EPS_COLS = ('eps_total', 'eps_contributivo', 'eps_subsidiado', 'eps_fecha_corte')
 
+# SIVIGILA microdata (scrapers/sivigila_scraper.py): cases per week × residence
+# municipality. Year-to-date counts are cut at a week so they compare with the
+# INS bulletin period and with the same cut a year earlier: PE n ends at week
+# 4·n (PE XIII = week 52/53). A completed year with no bulletin cap = all weeks.
+# (event code, output prefix, denominator: 'pob' total · 'men5' under-5 · None)
+_SV_EVENTS = (
+    ('113', 'sv_desnutricion', 'men5'),
+    ('112', 'sv_mort_desnutricion', 'men5'),
+    ('220', 'sv_dengue_grave', 'pob'),
+    ('356', 'sv_suicidio', 'pob'),
+    ('875', 'sv_violencia', 'pob'),
+    ('740', 'sv_sifilis', None),           # per 1,000 births: births not loaded yet
+)
+# Per-100 for prevalence (%), per-100k for the rest
+_SV_SCALE = {'sv_desnutricion': 100.0}
+
+
+def _sv_cols() -> list[str]:
+    cols = []
+    for _, pre, den in _SV_EVENTS:
+        cols.append(f'{pre}_casos')
+        if den:
+            cols.append(f'{pre}_tasa')
+    return cols + ['sv_semana', 'periodo_sivigila']
+
+
+def _sv_week(year, caps: dict | None) -> str:
+    """SQL for the week cut. Priority: the last week loaded for the selection year
+    (caps['sv_semana'], so a current year compares with the same weeks a year
+    earlier), else 4 × the bulletin's PE, else the whole year."""
+    caps = caps or {}
+    if caps.get('sv_semana'):
+        return str(int(caps['sv_semana']))
+    pe = caps.get('pe', {})
+    n = max(pe.values()) if pe else None
+    return str(min(53, 4 * int(n))) if n else '53'
+
+
+def _sv_last_week(con, year: int) -> int | None:
+    try:
+        return con.execute("SELECT MAX(semana) FROM sivigila_casos WHERE anio = ?",
+                           [int(year)]).fetchone()[0]
+    except duckdb.CatalogException:
+        return None
+
+
+def _sv_sql(level_cols: str, where: str, year, caps: dict | None, pob_year: str) -> str:
+    """Year-to-date SIVIGILA cases and rates for one level.
+    level_cols: '' (national), 'geo_dep_codigo', or 'geo_dep_codigo, geo_mun_codigo'."""
+    wk = _sv_week(year, caps)
+    yr = f'anio = {int(year)}' if year is not None else \
+         '(anio = (SELECT MAX(anio) FROM sivigila_casos))'
+    key = level_cols or "'nacional'"
+    grp = f'GROUP BY {level_cols}' if level_cols else ''
+    # population denominators at this level
+    pob_key = level_cols.split(',')[-1].strip() if level_cols else None
+    join_pob = (f"LEFT JOIN (SELECT {pob_key}, SUM(poblacion) AS pob FROM v_demografico_edad_sexo "
+                f"WHERE anio = {pob_year} AND {pob_key} IS NOT NULL GROUP BY 1) p USING ({pob_key}) "
+                f"LEFT JOIN (SELECT {pob_key}, SUM(poblacion) AS men5 FROM v_demografico_menores5 "
+                f"WHERE anio = {pob_year} AND {pob_key} IS NOT NULL GROUP BY 1) m USING ({pob_key})"
+                if pob_key else
+                f", (SELECT SUM(poblacion) AS pob FROM v_demografico_edad_sexo WHERE anio = {pob_year} "
+                f"AND geo_mun_codigo IS NOT NULL) p, (SELECT SUM(poblacion) AS men5 FROM "
+                f"v_demografico_menores5 WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL) m")
+    sel = []
+    for code, pre, den in _SV_EVENTS:
+        sel.append(f"COALESCE(SUM(casos) FILTER (WHERE evento = '{code}'), 0) AS {pre}_casos")
+        if den:
+            scale = _SV_SCALE.get(pre, 100000.0)
+            sel.append(f"{scale} * COALESCE(SUM(casos) FILTER (WHERE evento = '{code}'), 0) "
+                       f"/ NULLIF(ANY_VALUE({den}), 0) AS {pre}_tasa")
+    sel.append(f"{wk} AS sv_semana")
+    sel.append(f"(CAST(ANY_VALUE(anio) AS VARCHAR) || ' sem. 1–{wk}') AS periodo_sivigila")
+    return f"""
+    SELECT {level_cols + ', ' if level_cols else ''}{', '.join(sel)}
+    FROM (SELECT c.*, p.pob, m.men5 FROM v_sivigila_casos c {join_pob}
+          WHERE {where} AND {yr} AND semana <= {wk}) t
+    {grp}"""
+
+
 # Afiliación: subsidised-regime affiliates without Sisbén IV classification (FCT Aseguramiento 8–11)
 _SISBEN_SRC = {
     'afil_sin_sisben':             '"Afil. Subsidiado sin SISBEN IV"',
@@ -488,6 +568,21 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
                          'NULL::DOUBLE AS negligencia_abandono', 'NULL::DOUBLE AS violencia_sexual',
                          'NULL::DOUBLE AS violencia_genero_intrafamiliar',
                          'NULL::VARCHAR AS periodo_violencia']
+
+    # ── SIVIGILA microdata (all municipalities) ─────────────────────────────
+    if ev.get('v_sivigila_casos') and ev.get('v_demografico_menores5'):
+        ctefile.append(('sv', _sv_sql('geo_dep_codigo, geo_mun_codigo',
+                                      'geo_mun_codigo IS NOT NULL', year, caps, pob_year)))
+        join_clauses.append("LEFT JOIN sv ON gm.dep_codigo = sv.geo_dep_codigo AND gm.mun_codigo = sv.geo_mun_codigo")
+        # A territory with no row in sv has zero cases, but only when the year's
+        # microdata exist at all (otherwise NULL, so the dashboard can fall back
+        # to the PDF bulletin). EXISTS (SELECT 1 FROM sv) is that test.
+        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv) THEN COALESCE(sv.{c}, 0) END AS {c}'
+                         if c.endswith(('_casos', '_tasa')) else
+                         f'COALESCE(sv.{c}, (SELECT ANY_VALUE({c}) FROM sv)) AS {c}'
+                         for c in _sv_cols()]
+    else:
+        select_extra += [f'NULL::{"VARCHAR" if c == "periodo_sivigila" else "DOUBLE"} AS {c}' for c in _sv_cols()]
 
     # Unavailable indicators
     select_extra += [
@@ -861,6 +956,20 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
             'NULL::DOUBLE AS violencia_genero_intrafamiliar', 'NULL::VARCHAR AS periodo_violencia',
         ]
 
+    # ── SIVIGILA microdata (department = sum of its municipalities, districts included) ─
+    if ev.get('v_sivigila_casos') and ev.get('v_demografico_menores5'):
+        ctefile.append(('sv', _sv_sql('geo_dep_codigo', 'geo_dep_codigo IS NOT NULL', year, caps, pob_year)))
+        join_clauses.append("LEFT JOIN sv ON gd.dep_codigo = sv.geo_dep_codigo")
+        # A territory with no row in sv has zero cases, but only when the year's
+        # microdata exist at all (otherwise NULL, so the dashboard can fall back
+        # to the PDF bulletin). EXISTS (SELECT 1 FROM sv) is that test.
+        select_extra += [f'CASE WHEN EXISTS (SELECT 1 FROM sv) THEN COALESCE(sv.{c}, 0) END AS {c}'
+                         if c.endswith(('_casos', '_tasa')) else
+                         f'COALESCE(sv.{c}, (SELECT ANY_VALUE({c}) FROM sv)) AS {c}'
+                         for c in _sv_cols()]
+    else:
+        select_extra += [f'NULL::{"VARCHAR" if c == "periodo_sivigila" else "DOUBLE"} AS {c}' for c in _sv_cols()]
+
     select_extra += [
         'NULL::DOUBLE  AS lsp',
         'NULL::DOUBLE  AS vsp',
@@ -920,6 +1029,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
                        *_SISBEN_COLS, 'periodo_afiliacion']))
     if ev.get('v_bdua_eps'):
         parts.append(('eps', _eps_counts('', 'TRUE'), list(_EPS_COLS)))
+    if ev.get('v_sivigila_casos') and ev.get('v_demografico_menores5'):
+        parts.append(('sv', _sv_sql('', 'geo_mun_codigo IS NOT NULL', year, caps, pob_year), _sv_cols()))
     if ev.get('v_reps_capacidad'):
         parts.append(('cap', f"""
     SELECT {_CAP_TYPES}
@@ -1030,13 +1141,19 @@ def _build_period_tables(con: duckdb.DuckDBPyConnection, ev: dict[str, bool]) ->
     """
     grid = _period_grid(con)
     years = {y for y, _ in grid}
+    if ev.get('v_sivigila_casos'):   # microdata years count as "prior year available"
+        years |= {int(r[0]) for r in con.execute('SELECT DISTINCT anio FROM sivigila_casos').fetchall()}
     # Same period one year earlier, for "tendencia vs. año anterior" (FCT): each
     # source capped at the period the current selection actually shows, e.g.
     # 2026 PE IX is compared with 2025 PE IX, not with the whole of 2025.
-    prev = [(y, m, _resolve_caps(con, ev, y, m)) for y, m in grid if y - 1 in years]
+    # SIVIGILA: both tables are cut at the selection year's last loaded week.
+    sv_wk = {y: _sv_last_week(con, y) for y in {y for y, _ in grid}}
+    cur_caps = {y: ({'sv_semana': sv_wk[y]} if sv_wk.get(y) else None) for y in sv_wk}
+    prev = [(y, m, {**_resolve_caps(con, ev, y, m), 'sv_semana': sv_wk.get(y)})
+            for y, m in grid if y - 1 in years]
     for level, build in (('municipio', _municipio_sql), ('departamento', _departamento_sql),
                          ('nacional', _nacional_sql)):
-        for table, rows in ((f'metricas_{level}_periodo', [(y, m, y, m, None) for y, m in grid]),
+        for table, rows in ((f'metricas_{level}_periodo', [(y, m, y, m, cur_caps.get(y)) for y, m in grid]),
                             (f'metricas_{level}_anterior', [(y, m, y - 1, None, c) for y, m, c in prev])):
             if not rows:
                 con.execute(f"DROP TABLE IF EXISTS {table}")
@@ -1088,6 +1205,10 @@ def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
         n = con.execute(f"SELECT MAX({_PE_CASE}) FROM {view} WHERE anio = ?", [year]).fetchone()[0]
         if n:
             caps['pe'][view] = int(n)
+    if ev.get('v_sivigila_casos') and not caps['pe']:
+        wk = con.execute("SELECT MAX(semana) FROM sivigila_casos WHERE anio = ?", [year]).fetchone()[0]
+        if wk:
+            caps['pe']['sivigila'] = (int(wk) + 3) // 4
     if ev.get('v_afiliacion'):
         caps['afil_mes'] = month or con.execute(
             f"SELECT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? "
@@ -1127,6 +1248,7 @@ def build_all(db_path: 'str | Path') -> None:
             'v_ins_mortalidad_menores5', 'v_ins_dengue', 'v_ins_violencia_genero',
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
             'v_bdua_eps', 'v_bdua_piramide',
+            'v_sivigila_casos', 'v_demografico_menores5',
         ]}
         missing = [k for k, v in ev.items() if not v]
         if missing:

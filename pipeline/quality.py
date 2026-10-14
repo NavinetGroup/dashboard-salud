@@ -43,7 +43,7 @@ _TRACKED = [
     'reps_prestadores', 'reps_sedes', 'reps_servicios', 'reps_capacidad',
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
-    'bdua_eps', 'bdua_piramide',
+    'bdua_eps', 'bdua_piramide', 'sivigila_casos',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -133,6 +133,8 @@ class _Checks:
             ('v_irca', 'TRUE', 99.5, 'error'),
             # BDUA: 'DPTO. GUAINIA' / 'DPTO. VAUPES' rows have no municipality (≈0.03 %)
             ('v_bdua_eps', 'TRUE', 99.5, 'error'),
+            # SIVIGILA residence codes are DIVIPOLA; a miss means a retired/unknown code
+            ('v_sivigila_casos', 'TRUE', 99.0, 'error'),
             # INS PDF tables carry footnotes / header residue as rows
             ('v_ins_desnutricion_aguda', 'municipio IS NOT NULL', 90, 'warn'),
             ('v_ins_intento_suicidio', 'municipio IS NOT NULL', 90, 'warn'),

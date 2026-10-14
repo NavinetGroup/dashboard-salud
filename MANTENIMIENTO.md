@@ -25,7 +25,8 @@ Estos scrapers descargan datos sin intervención humana:
 | Afiliación | ZIPs mensuales en `minsalud.gov.co` |
 | SuperSalud IPS/EPS | Excel directo en `docs.supersalud.gov.co` |
 | BDUA (EPS por territorio, pirámide de afiliados) | API de datos.gov.co (`d7a5-cnra`, `tq4m-hmg2`). Solo publica el mes vigente: cada corrida archiva su foto en `data/parquet/bdua_*_YYYY_MM.parquet` (no borrarlas: son la única serie histórica) |
-| INS PDFs (6 indicadores) | URLs públicas del INS |
+| INS PDFs (6 indicadores) | URLs públicas del INS. Solo se usan para el año en curso y para la razón de mortalidad materna |
+| INS SIVIGILA microdatos (6 eventos, todos los municipios) | Portal SIVIGILA (SharePoint REST). Archivos anuales finales; el año en curso sale ~agosto del siguiente. Los xlsx crudos (hasta 110 MB) quedan en `data/raw/sivigila/` y solo se vuelven a bajar si el INS los modificó |
 
 Para correr el ciclo completo:
 

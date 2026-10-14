@@ -96,6 +96,16 @@ def transform_demografico(con: duckdb.DuckDBPyConnection) -> None:
             FROM read_parquet('{edad_sexo_path.as_posix()}')
             GROUP BY codigo_dep, nombre_dep, codigo_mun, municipio, anio, sexo
         """)
+        # Under-5 population per municipality: denominator for the SIVIGILA
+        # malnutrition indicators (the slim table above collapses age).
+        con.execute('DROP TABLE IF EXISTS demografico_menores5')
+        con.execute(f'''
+            CREATE TABLE demografico_menores5 AS
+            SELECT codigo_dep, codigo_mun, anio, SUM(poblacion) AS poblacion
+            FROM read_parquet('{edad_sexo_path.as_posix()}')
+            WHERE edad < 5
+            GROUP BY codigo_dep, codigo_mun, anio
+        ''')
         n = con.execute('SELECT COUNT(*) FROM demografico_edad_sexo').fetchone()[0]
         log.info(f'Tabla DuckDB [demografico_edad_sexo]: {n:,} filas (slim, edad+area colapsadas)')
     else:
@@ -169,6 +179,28 @@ def transform_ips(con: duckdb.DuckDBPyConnection) -> None:
             df_int = pl.concat(frames, how='diagonal_relaxed').unique()
             parquet_path = _write_parquet(df_int, 'ips_detalle')
             _register_table(con, 'ips_detalle', parquet_path)
+
+
+# ---------------------------------------------------------------------------
+# Source: SIVIGILA microdata — cases per week × residence municipality
+# ---------------------------------------------------------------------------
+
+def transform_sivigila(con: duckdb.DuckDBPyConnection) -> None:
+    files = sorted(PARQUET_DIR.glob('sivigila_casos_*.parquet'))
+    if not files:
+        log.warning('sivigila: no hay parquet. Ejecuta scrapers/sivigila_scraper.py primero.')
+        return
+    glob = f'{PARQUET_DIR.as_posix()}/sivigila_casos_*.parquet'
+    con.execute('DROP TABLE IF EXISTS sivigila_casos')
+    # One parquet per year, each a full rebuild of that year: no overlap to dedupe.
+    con.execute(f"""CREATE TABLE sivigila_casos AS
+                    SELECT evento, anio, semana,
+                           TRY_CAST(cod_dpto AS INTEGER) AS codigo_dep,
+                           TRY_CAST(cod_mun AS INTEGER)  AS codigo_mun,
+                           casos
+                    FROM read_parquet('{glob}')""")
+    n, yrs = con.execute('SELECT COUNT(*), LIST(DISTINCT anio ORDER BY anio) FROM sivigila_casos').fetchone()
+    log.info(f'Tabla DuckDB [sivigila_casos]: {n:,} filas (años {yrs})')
 
 
 # ---------------------------------------------------------------------------
@@ -332,6 +364,9 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
 
         print('transform: procesando BDUA...')
         transform_bdua(con)
+
+        print('transform: procesando SIVIGILA...')
+        transform_sivigila(con)
 
         print('transform: procesando DIFT18...')
         transform_dift18(con)
