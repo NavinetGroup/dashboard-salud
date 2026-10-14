@@ -149,8 +149,8 @@ class _Checks:
             pct = pct or 0.0
             self.add(f'{view}_match_municipio', level, pct >= minimum,
                      f'{pct:.2f}% de {n:,} filas con código de municipio (mínimo {minimum}%)')
-        dep_sources = ['v_ins_dengue', 'v_ins_violencia_genero', 'v_ins_mortalidad_menores5',
-                       'v_ins_sifilis_congenita', 'v_supersalud_ips_intervenidas',
+        dep_sources = ['v_ins_violencia_genero', 'v_ins_mortalidad_menores5',
+                       'v_supersalud_ips_intervenidas',
                        'v_supersalud_eps_intervenidas']
         for view in dep_sources:
             if not self.has(view):
@@ -214,7 +214,7 @@ class _Checks:
             ('cobertura_pct', 0, 100),
             ('irca_promedio', 0, 100),
             ('prevalencia_desnutricion_aguda', 0, 20),      # percent
-            ('incidencia_dengue_x100k', 0, 5000),
+            ('sv_dengue_grave_tasa', 0, 200),               # SIVIGILA, per 100k
             ('razon_mortalidad_materna', 0, 2000),          # department level
             ('tasa_intento_suicidio', 0, 1000),
             ('violencia_fisica', 0, 2000),
@@ -267,7 +267,7 @@ class _Checks:
                 self.add('frescura_sivigila_preliminar', 'warn', lag <= 3,
                          f'{y} hasta semana {wk} (semana actual {cur_wk}, {lag} de atraso)')
         # INS periods are ~4 weeks; PE n ends around week 4n of the year
-        for t in ('ins_dengue', 'ins_mortalidad_materna', 'ins_desnutricion_aguda',
+        for t in ('ins_mortalidad_materna', 'ins_desnutricion_aguda',
                   'ins_intento_suicidio', 'ins_violencia_genero'):
             if not self.has(t):
                 continue
