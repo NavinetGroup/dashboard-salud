@@ -80,4 +80,4 @@ st.markdown("""
 footer('Los indicadores permiten monitorear las condiciones de salud de la población y la gestión '
        'integral del riesgo. Las tasas INS son acumuladas en el año hasta el periodo indicado; la '
        'tendencia compara con el mismo periodo del año anterior. Sífilis congénita: denominador DANE del año, o del '
-       'último año completo publicado mientras el año está en curso.', ['sivigila', 'sivicap', 'dane', 'eevv'])
+       'último año completo publicado mientras el año está en curso.', ['sivigila', 'ins_boletin', 'ins_vsp', 'sivicap', 'dane', 'eevv'])

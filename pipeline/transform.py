@@ -2,13 +2,11 @@
 """
 transform.py — Tidy all raw sources into Parquet + DuckDB.
 
-For each source:
-  1. Read raw CSV(s) from data/raw/ with Polars.
-  2. Apply schema normalization.
-  3. Write partitioned Parquet to data/parquet/<source>/.
-  4. Register as a table in data/informe_regional.duckdb.
+Each scraper writes its parquet files to data/parquet/; this module loads them
+into DuckDB tables (newest snapshot per source where the source is a monthly
+photo), then runs geo_normalize (v_* views with DANE codes) and metricas.
 
-Run: python pipeline/transform.py
+Run: python -m pipeline.transform
 """
 
 import logging
@@ -21,7 +19,6 @@ import polars as pl
 log = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-RAW_DIR = BASE_DIR / 'data' / 'raw'
 PARQUET_DIR = BASE_DIR / 'data' / 'parquet'
 DB_PATH = BASE_DIR / 'data' / 'informe_regional.duckdb'
 
@@ -29,14 +26,6 @@ DB_PATH = BASE_DIR / 'data' / 'informe_regional.duckdb'
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
-
-def _write_parquet(df: pl.DataFrame, name: str) -> Path:
-    out = PARQUET_DIR / f'{name}.parquet'
-    out.parent.mkdir(parents=True, exist_ok=True)
-    df.write_parquet(out, compression='zstd', use_pyarrow=True)
-    log.info(f'Parquet escrito: {out} ({len(df):,} filas)')
-    return out
-
 
 _SNAPSHOT_RE = re.compile(r'_(\d{4})_(\d{2})$')
 
@@ -120,10 +109,6 @@ def transform_demografico(con: duckdb.DuckDBPyConnection) -> None:
     else:
         log.warning('demografico: demografico_etnico.parquet no encontrado — ejecuta scrapers/demografico.py primero.')
 
-
-# ---------------------------------------------------------------------------
-# Source: IPS (Resumen_IPS_por_departamento.csv + IPS_intermedio.csv)
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # Source: SIVIGILA microdata — cases per week × residence municipality
@@ -295,10 +280,9 @@ def run(base_dir: str = None, db_path: 'str | Path | None' = None) -> None:
     db_path defaults to the live DB; pipeline/runner.py passes a separate build
     file and only publishes it after the quality checks pass.
     """
-    global BASE_DIR, RAW_DIR, PARQUET_DIR, DB_PATH
+    global BASE_DIR, PARQUET_DIR, DB_PATH
     if base_dir:
         BASE_DIR = Path(base_dir)
-        RAW_DIR = BASE_DIR / 'data' / 'raw'
         PARQUET_DIR = BASE_DIR / 'data' / 'parquet'
         DB_PATH = BASE_DIR / 'data' / 'informe_regional.duckdb'
     if db_path:

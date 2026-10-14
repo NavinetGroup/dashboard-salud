@@ -3,7 +3,7 @@
 Scraper genérico para informes epidemiológicos periódicos del INS (PDF).
 
 URL patrón:
-  https://www.ins.gov.co/buscador-eventos/Informesdeevento/{EVENTO}_PE_{PERIODO}_{AÑO}.pdf
+  https://www.ins.gov.co/buscador-eventos/Informesdeevento/{EVENTO}%20PE%20{PERIODO}%20{AÑO}.pdf
 
 Periodos epidemiológicos colombianos: 13 por año (~4 semanas c/u).
 
@@ -311,10 +311,11 @@ def _download_pdf(url: str, retries: int = 3) -> bytes | None:
 
 
 # ---------------------------------------------------------------------------
-# Table extraction — 3-stage pipeline:
+# Table extraction — 4-stage pipeline:
 #   1. pdfplumber lines strategy  (vector PDFs with ruling lines)
-#   2. pdfplumber text strategy   (vector PDFs with whitespace-separated columns)
-#   3. Tesseract OCR              (image-based or complex-layout PDFs)
+#   2. word grid                  (columns rebuilt from word positions)
+#   3. pdfplumber text strategy   (vector PDFs with whitespace-separated columns)
+#   4. Tesseract OCR              (image-based or complex-layout PDFs; optional)
 # ---------------------------------------------------------------------------
 
 def _normalize_col(s: str) -> str:

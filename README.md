@@ -36,7 +36,16 @@ tools/publicar_datos.py                                                     solo
 | Cada mes | `Actualizar datos.bat` (procesa, controla y ofrece publicar) |
 | Cuando cambia el código del tablero | `.venv\Scripts\python.exe tools\build_portable.py` y entregar el zip nuevo |
 
-Guía completa, fuentes, archivos manuales (IRCA) y solución de problemas: **[MANTENIMIENTO.md](MANTENIMIENTO.md)**.
+## Documentación
+
+- **[Manual de usuario](docs/MANUAL_USUARIO.md)** (también `docs/MANUAL_USUARIO.docx`): abrir el tablero,
+  filtros, lectura de cada módulo, actualización, preguntas frecuentes.
+- **[Manual técnico](docs/MANUAL_TECNICO.md)** (también `docs/MANUAL_TECNICO.docx`): arquitectura,
+  instalación, operación mensual, cada fuente y su scraper, pipeline, métricas, controles de calidad,
+  tablero, distribución, cómo extender o reproducir el sistema, solución de problemas.
+- Fórmulas de Financiamiento: [docs/FINANCIAMIENTO_FORMULAS.md](docs/FINANCIAMIENTO_FORMULAS.md).
+
+Los `.docx` se generan desde los `.md` con `.venv\Scripts\python.exe tools\build_docs.py`.
 
 ## Estructura
 
@@ -44,8 +53,8 @@ Guía completa, fuentes, archivos manuales (IRCA) y solución de problemas: **[M
 dashboard/        tablero (Streamlit): app.py, vistas por módulo, componentes y mapas DANE
 pipeline/         transform → métricas → controles de calidad → publicar → exportar (runner.py)
 scrapers/         una descarga por fuente; settings.py lee informe_regional.toml
-tools/            publicar_datos.py, build_portable.py, build_geojson.py, setup_sivicap_session.py
-docs/             investigación de fuentes, fórmulas de Financiamiento, plan FCT, auditoría
+tools/            publicar_datos.py, build_portable.py, build_geojson.py, build_docs.py, setup_sivicap_session.py
+docs/             manuales (usuario y técnico), fórmulas de Financiamiento, investigación de fuentes, auditoría
 requirements.txt            paquetes del visor
 requirements-pipeline.txt   paquetes del procesamiento (incluye los del visor)
 informe_regional.example.toml   plantilla de configuración local (carpeta de archivos manuales)

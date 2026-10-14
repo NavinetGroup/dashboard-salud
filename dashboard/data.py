@@ -4,6 +4,7 @@
 import hashlib
 import json
 import os
+import shutil
 import urllib.request
 from pathlib import Path
 
@@ -61,17 +62,25 @@ def _install(candidate: Path) -> bool:
 
 
 def _from_drop_folder() -> str:
-    """A: newest valid database dropped in data/actualizacion/ ('' if none newer)."""
+    """A: newest valid database dropped in data/actualizacion/ ('' if none newer).
+    A dropped file that is valid but not newer is deleted (it would be re-checked
+    on every start); anything that is not a viewer database is left alone."""
     if not DROP_DIR.exists():
         return ''
-    for f in sorted(DROP_DIR.glob('*.duckdb'), key=lambda p: _db_version(p), reverse=True):
-        staged = VIEWER_DB.with_name(VIEWER_DB.name + '.part')
-        staged.unlink(missing_ok=True)
-        staged.write_bytes(f.read_bytes())
-        if _install(staged):
-            f.unlink(missing_ok=True)
-            return _db_version(VIEWER_DB)
-        staged.unlink(missing_ok=True)
+    staged = VIEWER_DB.with_name(VIEWER_DB.name + '.part')
+    for f in sorted(DROP_DIR.glob('*.duckdb'), key=_db_version, reverse=True):
+        version = _db_version(f)
+        if not version:
+            continue
+        try:
+            staged.unlink(missing_ok=True)
+            shutil.copyfile(f, staged)
+            installed = _install(staged)
+        finally:
+            staged.unlink(missing_ok=True)
+        f.unlink(missing_ok=True)
+        if installed:
+            return version
     return ''
 
 
@@ -96,43 +105,72 @@ def _from_release() -> str:
         part.unlink(missing_ok=True)
 
 
-@st.cache_resource(show_spinner=False, ttl=6 * 3600)
+# What the last update check did, for app.py to report (a cached function must
+# not draw Streamlit elements itself: they would be replayed on every cache hit).
+_STATUS = {'updated': '', 'problems': ''}
+
+
+@st.cache_resource(show_spinner='Buscando una versión más reciente de los datos…', ttl=6 * 3600)
 def _ensure_db() -> str:
-    """Path of the database to read, updating the viewer copy first (see above).
-    Cached for 6 h, so a long-running app also picks up the monthly release."""
+    """Path of the database to read, updating the viewer copy first (see above);
+    '' when there is no usable viewer database. Cached for 6 h, so a long-running
+    app also picks up the monthly release."""
     explicit = os.environ.get('INFORME_DB_PATH')
     if explicit:
         return explicit
     if _PIPELINE_DB.exists():
         return str(_PIPELINE_DB)
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
-    updated = _from_drop_folder()
+    DROP_DIR.mkdir(exist_ok=True)
+    updated, problems = '', []
+    # Neither source may take the app down: offline, GitHub unreachable, a bad
+    # or half-copied file, or the current database locked by another window all
+    # leave the current copy in place and are reported in the sidebar.
     try:
-        with st.spinner('Buscando una versión más reciente de los datos…'):
-            updated = _from_release() or updated
-    except Exception as e:   # offline, GitHub unreachable, bad file: keep what we have
-        st.session_state['_update_error'] = str(e)
+        updated = _from_drop_folder()
+    except Exception as e:
+        problems.append(f'carpeta de actualización: {e}')
+    try:
+        updated = _from_release() or updated
+    except Exception as e:
+        problems.append(f'descarga: {e}')
+    _STATUS.update(updated=updated, problems='; '.join(problems))
     if updated:
         st.cache_data.clear()
-        st.toast(f'Datos actualizados a la versión {updated}', icon=':material/download_done:')
-    if not VIEWER_DB.exists():
-        st.error('No hay datos para mostrar todavía.')
-        st.markdown(
-            '- **Automático:** conecte el equipo a internet y recargue la página; la aplicación '
-            'descargará la última versión publicada.\n'
-            '- **Manual:** copie el archivo `informe_regional_visor.duckdb` que le compartieron en '
-            f'la carpeta `{DROP_DIR}` y recargue.')
-        st.stop()
-    return str(VIEWER_DB)
+    return str(VIEWER_DB) if _db_version(VIEWER_DB) else ''
+
+
+def _db_path() -> str:
+    """The database to read; stops the page with instructions when there is none."""
+    path = _ensure_db()
+    if path:
+        return path
+    st.error('El archivo de datos está dañado o incompleto.' if VIEWER_DB.exists()
+             else 'No hay datos para mostrar todavía.')
+    st.markdown(
+        '- **Automático:** conecte el equipo a internet y recargue la página; la aplicación '
+        'descargará la última versión publicada.\n'
+        '- **Manual:** copie el archivo `informe_regional_visor.duckdb` que le compartieron en '
+        f'la carpeta `{DROP_DIR}` y recargue.')
+    if _STATUS['problems']:
+        st.caption('Detalle: ' + _STATUS['problems'])
+    st.stop()
+    return ''
 
 
 def data_version() -> str:
     """Version stamp shown in the sidebar ('' for the pipeline's own database)."""
-    return _db_version(Path(_ensure_db()))
+    return _db_version(Path(_db_path()))
+
+
+def update_status() -> dict:
+    """{'updated': version just installed or '', 'problems': why no check was possible or ''}."""
+    _db_path()
+    return _STATUS
 
 
 def _connect() -> duckdb.DuckDBPyConnection:
-    return duckdb.connect(_ensure_db(), read_only=True)
+    return duckdb.connect(_db_path(), read_only=True)
 
 _MES_ORDER = {
     'ENERO': 1, 'FEBRERO': 2, 'MARZO': 3, 'ABRIL': 4,

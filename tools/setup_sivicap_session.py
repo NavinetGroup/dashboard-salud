@@ -57,15 +57,17 @@ def main() -> None:
             # Pre-fill credentials so the user only has to do the reCAPTCHA + click submit
             try:
                 from selenium.webdriver.common.by import By
-                driver.find_element(By.ID, 'Email').send_keys(SIVICAP_USER)
-                driver.find_element(By.ID, 'Password').send_keys(SIVICAP_PASS)
+                for field, value in (('Email', SIVICAP_USER), ('Password', SIVICAP_PASS)):
+                    box = driver.find_element(By.ID, field)
+                    box.clear()            # Chrome autofill would otherwise double the text
+                    box.send_keys(value)
             except Exception:
                 pass
 
             print()
             print('=' * 70)
             print('  En la ventana de Chrome:')
-            print('    1. Las credenciales ya están llenadas')
+            print('    1. Las credenciales ya están llenadas: NO las vuelva a escribir')
             print(f'       ({SIVICAP_USER} / {SIVICAP_PASS})')
             print('    2. Resuelve el reCAPTCHA (clic en "No soy un robot")')
             print('    3. Haz clic en "Iniciar sesión"')

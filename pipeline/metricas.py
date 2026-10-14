@@ -786,14 +786,7 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
     FROM v_demografico_edad_sexo
     WHERE anio = {pob_year} AND geo_mun_codigo IS NOT NULL
     GROUP BY 1"""))
-        # INS department rows exclude the districts, so their rates need this denominator
-        ctefile.append(('pob_sin_dist', f"""
-    SELECT geo_dep_codigo, SUM(poblacion) AS pob
-    FROM v_demografico_edad_sexo
-    WHERE anio = {pob_year} AND geo_mun_codigo NOT IN ({_DISTRICT_CODES})
-    GROUP BY 1"""))
         join_clauses.append("LEFT JOIN dem   ON gd.dep_codigo = dem.geo_dep_codigo")
-        join_clauses.append("LEFT JOIN pob_sin_dist ON gd.dep_codigo = pob_sin_dist.geo_dep_codigo")
         select_extra += ['dem.pob_hombres', 'dem.pob_mujeres', 'dem.pob_total']
     else:
         select_extra += ['NULL::BIGINT AS pob_hombres', 'NULL::BIGINT AS pob_mujeres', 'NULL::BIGINT AS pob_total']

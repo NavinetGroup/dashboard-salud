@@ -10,7 +10,7 @@ Realiza un único login y descarga cada endpoint en secuencia:
   - Medidas de seguridad
   - Sanciones
 
-Salidas: data/raw/reps_<nombre>_YYYY_MM.csv (pipe-delimited)
+Salidas: data/parquet/reps_<nombre>_YYYY_MM.parquet (una foto por mes calendario)
 """
 
 import logging

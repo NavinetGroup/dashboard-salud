@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Geographic normalization layer for all 19 DuckDB tables.
+Geographic normalization layer for every source table (GEO_SOURCES + CODE_FIRST_SOURCES).
 
 Builds:
   geo_maestro      — authoritative DANE reference (dep_codigo, mun_codigo, dep_dane, mun_dane)

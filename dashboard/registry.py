@@ -46,7 +46,8 @@ SRC = {
     'reps':        'MSPS — REPS',
     'supersalud':  'Supersalud — entidades en medida especial',
     'sivicap':     'INS — SIVICAP',
-    'sivigila':    'INS — SIVIGILA (microdatos anuales; boletín PDF para el año en curso)',
+    'sivigila':    'INS — SIVIGILA (microdatos anuales; tablero público para el año en curso)',
+    'ins_boletin': 'INS — informes de evento por periodo epidemiológico (PDF)',
     'eevv':        'DANE — Estadísticas vitales (nacimientos y defunciones fetales)',
     'ins_vsp':     'INS — Evaluación del desempeño de la vigilancia en salud pública (trimestral)',
     'cuipo':       'CGR — CUIPO (ejecución presupuestal, datos.gov.co)',
@@ -81,7 +82,7 @@ _PDF_NOTE = 'Boletín INS (preliminar): microdatos SIVIGILA aún no publicados p
 _PDF_NOTE_LISTED = _PDF_NOTE + '; solo municipios listados en el boletín'
 SALUD_PUBLICA = [
     Indicator('mm', 'Razón de mortalidad materna', 'razon_mortalidad_materna',
-              'por 100.000 nacidos vivos', 1, 'pregnant_woman', True, source='sivigila',
+              'por 100.000 nacidos vivos', 1, 'pregnant_woman', True, source='ins_boletin',
               period_col='periodo_mortalidad_materna'),
     # INS: casos ÷ (nacidos vivos + muertes fetales, DANE) × 1.000; the case count
     # is shown as the card note (views/salud_publica.py)

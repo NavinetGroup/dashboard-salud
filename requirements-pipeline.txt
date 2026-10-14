@@ -3,6 +3,7 @@
 # transform import directly. Pinned to the versions the pipeline is tested with.
 -r requirements.txt
 polars==1.40.1
+pyarrow==24.0.0            # polars write_parquet(use_pyarrow=True); the viewer does not need it
 fastexcel==0.20.1          # polars.read_excel(engine='calamine')
 openpyxl==3.1.5
 requests==2.33.1
@@ -13,3 +14,4 @@ setuptools==82.0.1         # undetected-chromedriver imports distutils (removed 
 pdfplumber==0.11.9         # INS PDF bulletins
 pdf2image==1.17.0          # INS PDF: OCR fallback (needs Poppler + Tesseract installed)
 pytesseract==0.3.13
+python-docx==1.2.0           # tools/build_docs.py (manuales en Word)

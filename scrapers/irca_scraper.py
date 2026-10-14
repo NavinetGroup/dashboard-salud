@@ -415,7 +415,7 @@ def run(base_dir: str = None) -> None:
             raise ScrapeError(
                 'irca: SIVICAP no entregó datos (probable reCAPTCHA). Renueve la sesión con '
                 '"Renovar sesion SIVICAP.bat", o descargue el CSV a mano en '
-                f'{manual_dir("irca")} y re-ejecute (ver MANTENIMIENTO.md).')
+                f'{manual_dir("irca")} y re-ejecute (ver docs/MANUAL_TECNICO.md).')
 
         print(f'irca_scraper: procesando {downloaded.name}')
         df = _parse_irca(downloaded)

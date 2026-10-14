@@ -8,7 +8,8 @@ Output: dist/InformeRegional/ and dist/InformeRegional_<version>.zip
     InformeRegional/
       Abrir Informe Regional.bat   double-click: starts the app on a free port, opens the browser
       LEEME.txt
-      python/                      Python 3.12 embeddable (python.org) + the 6 viewer packages
+      Manual de usuario.docx       docs/MANUAL_USUARIO.docx, when it has been built
+      python/                     Python 3.12 embeddable (python.org) + the viewer packages
       app/
         .streamlit/config.toml
         dashboard/                 the app
@@ -90,6 +91,9 @@ DATOS
     copie el archivo informe_regional_visor.duckdb que le compartan en
     app\\data\\actualizacion\\ y vuelva a abrir el tablero.
 
+AYUDA
+  - "Manual de usuario.docx", en esta carpeta.
+
 PROBLEMAS
   - Si el navegador no se abre, copie en él la dirección que muestra la ventana negra
     (http://localhost:...).
@@ -104,12 +108,16 @@ def _download(url: str) -> bytes:
 
 def _trim(site: Path) -> int:
     """Delete what the viewer never loads: test suites bundled in the wheels,
-    C/C++ headers and link libraries, Cython sources, bytecode caches and
-    Plotly's Jupyter extensions. Returns the bytes removed."""
+    C/C++ headers and link libraries, Cython sources, bytecode caches, Plotly's
+    Jupyter extension and Streamlit's unused chart back-ends. Returns the bytes removed."""
     size = lambda p: sum(f.stat().st_size for f in p.rglob('*') if f.is_file()) if p.is_dir() else p.stat().st_size
     targets = [d for d in site.rglob('*') if d.is_dir() and d.name in ('tests', 'test', '__pycache__')]
-    targets += [site / 'share', site / 'pyarrow' / 'include', site / 'pyarrow' / 'src',
-                site / 'numpy' / '_core' / 'include']
+    # Streamlit dependencies the app never imports (st.pydeck_chart, st.altair_chart
+    # and bundled demos/skills); verified by running every page without them.
+    targets += [site / 'pydeck', site / 'altair', site / 'plotly' / 'labextension',
+                site / 'streamlit' / '.agents', site / 'streamlit' / 'hello']
+    targets += [d for d in site.glob('*.dist-info') if d.name.split('-')[0] in ('pydeck', 'altair')]
+    targets += [site / 'share', site / 'numpy' / '_core' / 'include']
     targets += [f for pat in ('*.pxd', '*.pyx', '*.lib', '*.h', '*.hpp', '*.cpp', '*.pyi')
                 for f in site.rglob(pat)]
     removed = 0
@@ -139,7 +147,7 @@ def main() -> int:
                    + 'Lib\\site-packages\n', encoding='ascii')
 
     print('2/4 Paquetes del visor (requirements.txt)')
-    # requirements.txt pins only the 6 direct packages; their dependencies are
+    # requirements.txt pins only the direct packages; their dependencies are
     # constrained to the exact versions in the venv the app is tested with (a
     # newer Starlette/Uvicorn than Streamlit expects serves blank pages).
     frozen = subprocess.run([sys.executable, '-m', 'pip', 'freeze'], check=True,
@@ -151,7 +159,7 @@ def main() -> int:
                     '-r', str(ROOT / 'requirements.txt'), '-c', str(constraints)], check=True)
 
     removed = _trim(py_dir / 'Lib' / 'site-packages')
-    print(f'  recortados {removed / 1e6:.0f} MB que el visor no usa (tests, cabeceras C, extensiones Jupyter)')
+    print(f'  recortados {removed / 1e6:.0f} MB que el visor no usa (tests, cabeceras C, pydeck, altair, extensiones Jupyter)')
 
     print('3/4 Aplicación y datos')
     shutil.copytree(ROOT / 'dashboard', app_dir / 'dashboard',
@@ -162,6 +170,9 @@ def main() -> int:
     (OUT / 'Abrir Informe Regional.bat').write_text(LAUNCHER.replace('\n', '\r\n'), encoding='cp1252')
     (app_dir / 'abrir.py').write_text(OPENER, encoding='utf-8')
     (OUT / 'LEEME.txt').write_text(README.replace('\n', '\r\n'), encoding='utf-8-sig')
+    manual = ROOT / 'docs' / 'MANUAL_USUARIO.docx'
+    if manual.exists():
+        shutil.copy2(manual, OUT / 'Manual de usuario.docx')
 
     print('4/4 Comprimiendo')
     zip_path = DIST / f'InformeRegional_{version}.zip'

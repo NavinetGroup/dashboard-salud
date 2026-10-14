@@ -38,3 +38,6 @@ informe_regional.toml
 
 # Portable build output (tools/build_portable.py)
 dist/
+
+# Client reference material (mockup): never committed
+docs/reference/

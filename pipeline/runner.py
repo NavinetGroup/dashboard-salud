@@ -3,12 +3,17 @@
 runner.py — Orchestrador APScheduler para el pipeline de datos.
 
 Schedules:
-  - 5th of each month at 08:00: REPS IPS + IRCA + Afiliación + transform
+  - 5th of each month at 08:00: the 12 monthly sources (see run_monthly) + transform
   - July 15 at 08:00: DANE demographics + transform
 
 Usage:
-  python pipeline/runner.py            # start scheduler (blocking)
-  python pipeline/runner.py --run-now  # run all scrapers immediately then exit
+  python -m pipeline.runner                   # start scheduler (blocking)
+  python -m pipeline.runner --monthly         # the monthly cycle, then exit
+  python -m pipeline.runner --annual          # DANE projections, then exit
+  python -m pipeline.runner --run-now         # every source, then exit
+  python -m pipeline.runner --transform-only  # rebuild from the parquet files
+
+Every run is also written to logs/pipeline_<date>.log.
 
 Exit codes (one-shot modes):
   0  every step succeeded
@@ -24,6 +29,7 @@ import faulthandler
 import logging
 import os
 import sys
+from datetime import datetime
 import traceback
 from pathlib import Path
 
@@ -60,10 +66,14 @@ from pipeline.quality import QualityError
 faulthandler.enable()
 sys.stdout.reconfigure(line_buffering=True)
 
+_LOG_DIR = Path(__file__).resolve().parent.parent / 'logs'
+_LOG_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s %(levelname)-8s %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(),
+              logging.FileHandler(_LOG_DIR / f'pipeline_{datetime.now():%Y-%m-%d}.log', encoding='utf-8')],
 )
 log = logging.getLogger(__name__)
 
@@ -142,7 +152,10 @@ def _publish_step(base_dir: str) -> None:
 
 
 def _export_step(base_dir: str) -> None:
-    # Slim copy for the viewer app (data/dist/), ready for tools/publicar_datos.py
+    # Slim copy for the viewer app (data/dist/), ready for tools/publicar_datos.py.
+    # The previous manifest goes first: if this export fails nothing describes a
+    # stale file as publishable, and publicar_datos.py refuses to run.
+    (Path(base_dir) / 'data' / 'dist' / 'manifest.json').unlink(missing_ok=True)
     exportar.run(base_dir, db_path=LIVE_DB)
 
 
@@ -260,7 +273,7 @@ def main() -> None:
     # misfire_grace_time: still run if the process was busy/asleep at the trigger
     # time (APScheduler's default is 1 s, which silently skips the month).
     scheduler.add_job(run_monthly, 'cron', day=5, hour=8, minute=0,
-                      id='monthly_refresh', name='Ciclo mensual (IPS + IRCA + Afiliación)',
+                      id='monthly_refresh', name='Ciclo mensual (12 fuentes)',
                       misfire_grace_time=6 * 3600, coalesce=True)
 
     # Annual: July 15 at 08:00

@@ -154,15 +154,6 @@ def ring_pct(value: float | None, color: str = '#1E88E5', label: str = '', heigh
     return fig
 
 
-def sparkline(x: list, y: list, color: str = '#26A69A') -> go.Figure:
-    fig = go.Figure(go.Scatter(x=x, y=y, mode='lines+markers', line={'color': color, 'width': 2},
-                               marker={'size': 4}, fill='tozeroy',
-                               fillcolor='rgba(38,166,154,0.10)', hovertemplate='%{x}: %{y:,.0f}<extra></extra>'))
-    fig.update_layout(height=70, margin={'t': 0, 'b': 0, 'l': 0, 'r': 0}, showlegend=False,
-                      xaxis={'visible': False}, yaxis={'visible': False}, plot_bgcolor='white')
-    return fig
-
-
 def pyramid_regimen(df: pd.DataFrame, height: int = 360) -> go.Figure:
     """Affiliated-population pyramid: subsidised to the left, contributory to the
     right (FCT Aseguramiento), one bar per age group, split by sex."""

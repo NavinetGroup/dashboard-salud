@@ -2,8 +2,8 @@
 """Informe Regional de Salud — entry point.
 
 Multipage app in the layout of the client's "Ficha de Caracterización Territorial"
-(docs/reference/DASHBOARD_FCT.docx): a menu, the one-page Ficha, five modules and
-the original detailed report. The sidebar selection (period, department,
+(docs/reference/DASHBOARD_FCT.docx): a menu, the one-page Ficha and five modules.
+The sidebar selection (period, department,
 municipality) lives here so it persists across pages; each page reads it from
 st.session_state['sel'].
 """
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from data import data_version
+from data import data_version, update_status
 from selection import sidebar
 from ui import inject_css
 
@@ -28,6 +28,12 @@ st.session_state['sel'] = sidebar()
 _version = data_version()
 if _version:   # viewer database: say which published version is on screen
     st.sidebar.caption(f'Datos: versión {_version}')
+    _status = update_status()
+    if _status['updated'] and st.session_state.get('_avisado') != _status['updated']:
+        st.toast(f"Datos actualizados a la versión {_status['updated']}", icon=':material/download_done:')
+        st.session_state['_avisado'] = _status['updated']
+    if _status['problems']:   # kept working with the current copy
+        st.sidebar.caption('No se pudo comprobar si hay datos más recientes.', help=_status['problems'])
 
 pages = {
     '': [
