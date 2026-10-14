@@ -44,8 +44,8 @@ Common elements: Supersalud branding, icon-led KPI cards, a source/period footer
 | 7 | Suicide attempt rate | ✅ (sparse) | Full coverage after the SIVIGILA rebuild 🔵 |
 | 8 | Gender-violence notification rate | ✅ | |
 | 9 | LSP quality standards | 🔴 | Not published (INS Redes) |
-| 10 | VSP management indicators | 🔵 | INS quarterly XLSX |
-| 11 | Basic risk-management capacities | 🔵/🔴 | INS Power BI; source file ideally from the client |
+| 10 | VSP management indicators | ✅ | INS quarterly performance XLSX (2024-II →): mean of applicable sub-indicators, groups 1–7. Proposed formula: confirm with Supersalud |
+| 11 | Basic risk-management capacities | ✅ | Same INS file, sub-indicator 8-1 (% progress in basic capacities), shown as % instead of the 0–5 score. Confirm with Supersalud |
 | — | **Trend vs previous year** | 🟡 | Needs *same-period* prior-year values (2026 PE V vs 2025 PE V), not "latest in year". Pipeline addition |
 
 ### Aseguramiento

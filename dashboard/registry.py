@@ -48,6 +48,7 @@ SRC = {
     'sivicap':     'INS — SIVICAP',
     'sivigila':    'INS — SIVIGILA (microdatos anuales; boletín PDF para el año en curso)',
     'eevv':        'DANE — Estadísticas vitales (nacimientos y defunciones fetales)',
+    'ins_vsp':     'INS — Evaluación del desempeño de la vigilancia en salud pública (trimestral)',
     'cuipo':       'CGR — CUIPO (ejecución presupuestal, datos.gov.co)',
     'sicodis':     'DNP — SICODIS (asignaciones SGP)',
     'cuipo_sgp':   'CGR — CUIPO · DNP — SICODIS',
@@ -111,10 +112,13 @@ SALUD_PUBLICA = [
                         'Boletín INS (preliminar): solo violencia física, nivel departamental')),
     Indicator('lsp', 'Cumplimiento de estándares de calidad de los LSP', None, '%',
               icon='biotech', trend='', pending='No publicado: INS Dirección de Redes. Solicitar vía Supersalud.'),
-    Indicator('vsp', 'Cumplimiento de indicadores de gestión en VSP', None, '%',
-              icon='monitoring', trend='', pending='INS — informe trimestral de evaluación del desempeño (por integrar).'),
-    Indicator('capacidades', 'Capacidades básicas en gestión del riesgo', None, 'puntaje 0–5',
-              icon='shield_person', trend='', pending='INS — tablero de capacidades básicas (por integrar).'),
+    # INS evaluación del desempeño VSP (departments and districts; municipalities
+    # show their department's value): mean of applicable sub-indicators, groups 1–7
+    Indicator('vsp', 'Cumplimiento de indicadores de gestión en VSP', 'vsp_cumplimiento', '%', 1,
+              'monitoring', False, 'pp', source='ins_vsp', period_col='periodo_vsp', dept_only=True),
+    # Same file, sub-indicator 8-1 "% de avance de capacidades básicas"
+    Indicator('capacidades', 'Capacidades básicas en gestión del riesgo', 'vsp_capacidades', '%', 1,
+              'shield_person', False, 'pp', source='ins_vsp', period_col='periodo_vsp', dept_only=True),
 ]
 
 # ── Aseguramiento ─────────────────────────────────────────────────────────────

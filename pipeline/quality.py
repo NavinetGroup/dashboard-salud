@@ -44,7 +44,7 @@ _TRACKED = [
     'reps_medidas_seguridad', 'reps_sanciones',
     'supersalud_ips_intervenidas', 'supersalud_eps_intervenidas',
     'bdua_eps', 'bdua_piramide', 'sivigila_casos', 'cuipo_salud', 'sgp_salud', 'cofin_lma',
-    'eevv_nacimientos',
+    'eevv_nacimientos', 'ins_vsp',
     'afiliacion', 'irca', 'demografico_edad_sexo', 'demografico_etnico',
 ]
 
@@ -353,6 +353,23 @@ class _Checks:
         self.add('nacimientos_rango', 'warn', 380_000 <= nac <= 700_000,
                  f'{y}: {nac:,} nacimientos (esperado 380 mil – 700 mil)')
 
+    # -- 6d. INS VSP performance (Salud pública 10–11) --------------------------
+    def vsp(self) -> None:
+        if not self.has('v_ins_vsp'):
+            return
+        y, q, n_ent, estado = self.one("""SELECT anio, trimestre, COUNT(DISTINCT codigo_entidad), ANY_VALUE(estado)
+            FROM ins_vsp GROUP BY anio, trimestre ORDER BY anio DESC, trimestre DESC LIMIT 1""")
+        # 32 departments + Bogotá and the other districts (38 in 2024–2026)
+        self.add('vsp_entidades', 'warn', n_ent >= 37, f'{y}-T{q} ({estado}): {n_ent} entidades evaluadas')
+        # Department rows (DD000) must be a department, district rows a municipality
+        bad = self.one("""SELECT COUNT(DISTINCT codigo_entidad) FROM v_ins_vsp
+                          WHERE (codigo_mun IS NULL AND geo_dep_codigo NOT IN (SELECT dep_codigo FROM geo_dep))
+                             OR (codigo_mun IS NOT NULL AND geo_mun_dane IS NULL)""")[0]
+        self.add('vsp_codigos', 'error', bad == 0, f'{bad} entidades con código DANE no reconocido')
+        # INS publishes a quarter's FINAL ~3 months after it closes
+        age = (self.today.year - y) * 12 + self.today.month - 3 * q
+        self.add('frescura_vsp', 'warn', age <= 9, f'último trimestre {y}-T{q} ({age} meses desde su cierre)')
+
     # -- 7. row-count jumps vs previous load ----------------------------------
     def row_jumps(self) -> None:
         self.con.execute("""CREATE TABLE IF NOT EXISTS _carga_log (
@@ -377,7 +394,7 @@ class _Checks:
 
     def run_all(self) -> list[Result]:
         for step in (self.structure, self.duplicates, self.geo_match, self.consistency,
-                     self.ranges, self.freshness, self.financing, self.births, self.row_jumps):
+                     self.ranges, self.freshness, self.financing, self.births, self.vsp, self.row_jumps):
             try:
                 step()
             except Exception as e:   # a broken check must be visible, not skipped

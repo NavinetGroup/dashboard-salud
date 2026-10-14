@@ -222,7 +222,8 @@ def transform_financiamiento(con: duckdb.DuckDBPyConnection) -> None:
                                ('sgp_salud', 'sgp_salud_', 'sicodis_scraper'),
                                ('cofin_meta', 'cofin_meta_', 'cofinanciacion_scraper'),
                                ('cofin_lma', 'cofin_lma_', 'cofinanciacion_scraper'),
-                               ('eevv_nacimientos', 'eevv_nacimientos_', 'eevv_scraper')):
+                               ('eevv_nacimientos', 'eevv_nacimientos_', 'eevv_scraper'),
+                               ('ins_vsp', 'ins_vsp_', 'ins_vsp_scraper')):
         con.execute(f'DROP TABLE IF EXISTS {table}')
         if not list(PARQUET_DIR.glob(f'{prefix}*.parquet')):
             log.warning(f'{table}: no hay parquet. Ejecuta scrapers/{src}.py primero.')
@@ -230,6 +231,10 @@ def transform_financiamiento(con: duckdb.DuckDBPyConnection) -> None:
         # One file per quarter (CUIPO), year (SICODIS, matriz) or month (LMA): no
         # overlap to dedupe. Co-financing files carry only the municipality code.
         dep = ', CAST(codigo_mun // 1000 AS INTEGER) AS codigo_dep' if prefix.startswith('cofin_') else ''
+        if prefix == 'ins_vsp_':   # DD000 = departamento; districts carry their municipal code
+            dep = (", CAST(CAST(codigo_entidad AS INTEGER) // 1000 AS INTEGER) AS codigo_dep, "
+                   "CASE WHEN codigo_entidad LIKE '%000' THEN NULL "
+                   "ELSE CAST(codigo_entidad AS INTEGER) END AS codigo_mun")
         con.execute(f"CREATE TABLE {table} AS SELECT *{dep} FROM read_parquet("
                     f"'{PARQUET_DIR.as_posix()}/{prefix}*.parquet', union_by_name=True)")
         n = con.execute(f'SELECT COUNT(*) FROM {table}').fetchone()[0]

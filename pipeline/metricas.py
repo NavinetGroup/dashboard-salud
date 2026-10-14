@@ -316,6 +316,45 @@ def _cofin_sql(group_cols: str, where: str, girado: str, meta: str, year, month,
           WHERE ({where}) GROUP BY {sel}anio) t ON t.anio = g.anio{on}"""
 
 
+# Salud pública 10–11 — INS evaluación del desempeño de la VSP (trimestral, por
+# departamento y distrito). Proposed formula: mean of the applicable
+# sub-indicators of groups 1–7 (0–1; 'NA' excluded); group 8 (8-1) is the
+# progress in basic capacities. Some files write percentages (60, 100) and a few
+# values exceed 1 slightly: rescale, then cap at 1.
+_VSP_COLS = ('vsp_cumplimiento', 'vsp_capacidades', 'vsp_subindicadores', 'periodo_vsp')
+_VSP_VAL = "LEAST(1.0, CASE WHEN valor > 1.5 THEN valor / 100.0 ELSE valor END)"
+
+
+def _vsp_sql(group_cols: str, where: str, year, month, caps: dict | None, pool: bool = False) -> str:
+    """One row per group at the latest quarter in scope. pool=True (national):
+    the mean of the entities' scores."""
+    m = (caps or {}).get('vsp_mes') or (_MESES.index(month) + 1 if month else None)
+    scope = _year_cond(year) + (f" AND trimestre * 3 <= {int(m)}" if m else '')
+    last = f"(SELECT MAX(anio * 10 + trimestre) FROM v_ins_vsp WHERE {scope})"
+    label = ("ANY_VALUE(LIST_VALUE('I', 'II', 'III', 'IV')[trimestre] || ' trim. ' || CAST(anio AS VARCHAR) "
+             "|| CASE WHEN estado = 'PRELIMINAR' THEN ' (preliminar)' ELSE '' END)")
+    per_entity = f"""
+        SELECT codigo_entidad, ANY_VALUE(geo_dep_codigo) AS geo_dep_codigo,
+               ANY_VALUE(geo_mun_codigo) AS geo_mun_codigo,
+               100.0 * AVG({_VSP_VAL}) FILTER (WHERE grupo BETWEEN 1 AND 7) AS vsp_cumplimiento,
+               100.0 * ANY_VALUE({_VSP_VAL}) FILTER (WHERE grupo = 8) AS vsp_capacidades,
+               COUNT(valor) FILTER (WHERE grupo BETWEEN 1 AND 7) AS vsp_subindicadores,
+               {label} AS periodo_vsp
+        FROM v_ins_vsp
+        WHERE ({where}) AND anio * 10 + trimestre = {last}
+        GROUP BY codigo_entidad"""
+    if pool:
+        return f"""
+    SELECT AVG(vsp_cumplimiento) AS vsp_cumplimiento, AVG(vsp_capacidades) AS vsp_capacidades,
+           SUM(vsp_subindicadores) AS vsp_subindicadores, ANY_VALUE(periodo_vsp) AS periodo_vsp
+    FROM ({per_entity})"""
+    return f"SELECT {group_cols}, {', '.join(_VSP_COLS)} FROM ({per_entity})"
+
+
+def _vsp_null() -> list[str]:
+    return [f'NULL::{"VARCHAR" if c == "periodo_vsp" else "DOUBLE"} AS {c}' for c in _VSP_COLS]
+
+
 def _cofin_null() -> list[str]:
     return [f'NULL::{"VARCHAR" if c == "periodo_cofin" else "DOUBLE"} AS {c}' for c in _COFIN_COLS]
 
@@ -710,11 +749,17 @@ def _municipio_sql(ev: dict[str, bool], year: int | None = None, month: str | No
         select_extra += [f'cofin.{c}' for c in _COFIN_COLS]
     else:
         select_extra += _cofin_null()
+    if ev.get('v_ins_vsp'):
+        ctefile.append(('vsp', _vsp_sql('geo_dep_codigo, geo_mun_codigo', 'geo_mun_codigo IS NOT NULL',
+                                        year, month, caps)))
+        join_clauses.append("LEFT JOIN vsp ON gm.dep_codigo = vsp.geo_dep_codigo AND gm.mun_codigo = vsp.geo_mun_codigo")
+        select_extra += [f'vsp.{c}' for c in _VSP_COLS]
+    else:
+        select_extra += _vsp_null()
 
     # Unavailable indicators
     select_extra += [
         'NULL::DOUBLE  AS lsp',
-        'NULL::DOUBLE  AS vsp',
         'NULL::VARCHAR AS gestion_riesgo',
     ]
 
@@ -1117,10 +1162,16 @@ def _departamento_sql(ev: dict[str, bool], year: int | None = None, month: str |
         select_extra += [f'cofin.{c}' for c in _COFIN_COLS]
     else:
         select_extra += _cofin_null()
+    if ev.get('v_ins_vsp'):
+        ctefile.append(('vsp', _vsp_sql('geo_dep_codigo', "codigo_entidad LIKE '%000' OR codigo_entidad = '11001'",
+                                        year, month, caps)))
+        join_clauses.append("LEFT JOIN vsp ON gd.dep_codigo = vsp.geo_dep_codigo")
+        select_extra += [f'vsp.{c}' for c in _VSP_COLS]
+    else:
+        select_extra += _vsp_null()
 
     select_extra += [
         'NULL::DOUBLE  AS lsp',
-        'NULL::DOUBLE  AS vsp',
         'NULL::VARCHAR AS gestion_riesgo',
     ]
 
@@ -1181,6 +1232,8 @@ def _nacional_sql(ev: dict[str, bool], year: int | None = None, month: str | Non
         parts.append(('sv', _sv_sql('', 'geo_mun_codigo IS NOT NULL', year, caps, pob_year), _sv_cols()))
     if ev.get('v_cuipo_salud'):   # every territorial entity pooled
         parts.append(('fin', _fin_sql('', 'TRUE', year, month, caps), list(_FIN_COLS)))
+    if ev.get('v_ins_vsp'):   # mean of the 38 evaluated entities (departments + districts)
+        parts.append(('vsp', _vsp_sql('', 'TRUE', year, month, caps, pool=True), list(_VSP_COLS)))
     if ev.get('v_cofin_lma') and ev.get('v_cofin_meta'):   # municipal + departmental effort
         parts.append(('cofin', _cofin_sql('', 'TRUE', 'girado_mun + girado_dep', 'meta_mun + meta_dep',
                                           year, month, caps), list(_COFIN_COLS)))
@@ -1354,7 +1407,8 @@ def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
     """The period each source shows for selection (year, month): the latest INS
     epidemiological period in that year, the afiliación month, the IRCA month."""
     caps: dict = {'pe': {}}
-    for view in [v for v in ev if v.startswith('v_ins_') and ev[v]]:
+    # INS bulletin views (epidemiological periods); VSP is quarterly, capped below
+    for view in [v for v in ev if v.startswith('v_ins_') and ev[v] and v != 'v_ins_vsp']:
         n = con.execute(f"SELECT MAX({_PE_CASE}) FROM {view} WHERE anio = ?", [year]).fetchone()[0]
         if n:
             caps['pe'][view] = int(n)
@@ -1366,6 +1420,10 @@ def _resolve_caps(con: duckdb.DuckDBPyConnection, ev: dict[str, bool],
         caps['afil_mes'] = month or con.execute(
             f"SELECT UPPER(TRIM(mes)) FROM afiliacion WHERE anio = ? "
             f"ORDER BY {_MES_CASE} DESC LIMIT 1", [year]).fetchone()[0]
+    if ev.get('v_ins_vsp'):
+        caps['vsp_mes'] = (_MESES.index(month) + 1 if month else
+                           3 * (con.execute("SELECT MAX(trimestre) FROM ins_vsp WHERE anio = ?",
+                                            [year]).fetchone()[0] or 0) or None)
     if ev.get('v_cofin_lma'):
         caps['cofin_mes'] = (_MESES.index(month) + 1 if month else
                              con.execute("SELECT MAX(mes) FROM cofin_lma WHERE anio = ?",
@@ -1410,7 +1468,7 @@ def build_all(db_path: 'str | Path') -> None:
             'v_supersalud_ips_intervenidas', 'v_supersalud_eps_intervenidas',
             'v_bdua_eps', 'v_bdua_piramide',
             'v_sivigila_casos', 'v_demografico_menores5',
-            'v_cuipo_salud', 'v_cofin_lma', 'v_cofin_meta', 'v_eevv_nacimientos',
+            'v_cuipo_salud', 'v_cofin_lma', 'v_cofin_meta', 'v_eevv_nacimientos', 'v_ins_vsp',
         ]}
         if not ev['v_eevv_nacimientos']:
             # Births only feed the syphilis rate: without them it is NULL, the rest of
